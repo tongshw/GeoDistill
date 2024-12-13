@@ -1,10 +1,10 @@
 import torch
 from torch import nn
 
-from efficientnet_pytorch.model import EfficientNet
+from .efficientnet_pytorch.model import EfficientNet
 
 
-class RotationPredictionNet(nn.Module):
+class LocationPredictionNet(nn.Module):
     def __init__(self, args):
         super().__init__()
 
@@ -33,39 +33,17 @@ class RotationPredictionNet(nn.Module):
         if self.grd_efficientnet:
             self.grd_efficientnet._fc = nn.Identity()
 
-        # 特征融合层
-        self.fusion_layer = nn.Sequential(
-            nn.Conv2d(feature_dim * 2, feature_dim, kernel_size=3, padding=1),
-            nn.BatchNorm2d(feature_dim),
-            nn.ReLU(inplace=True)
-        )
 
-        # 旋转角度预测头
-        self.rotation_head = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            nn.Linear(feature_dim, 64),
-            nn.ReLU(inplace=True),
-            nn.Linear(64, 1)  # 预测单个旋转角度
-        )
-
-    def forward(self, sat_img, grd_img=None):
+    def forward(self, sat, bev):
         # 提取卫星图像特征
-        sat_features = self.sat_efficientnet.extract_features(sat_img)
+        sat_features = self.sat_efficientnet.extract_features(sat)
 
         # 处理地面图像特征（如果使用孪生网络）
-        if self.grd_efficientnet is not None and grd_img is not None:
-            grd_features = self.grd_efficientnet.extract_features(grd_img)
+        if self.grd_efficientnet is not None:
+            bev_features = self.grd_efficientnet.extract_features(bev)
 
-            # 特征拼接
-            combined_features = torch.cat([sat_features, grd_features], dim=1)
-
-            # 特征融合
-            fused_features = self.fusion_layer(combined_features)
         else:
-            fused_features = sat_features
+            bev_features = self.sat_efficientnet.extract_features(bev)
 
-        # 预测旋转角度
-        rotation_angle = self.rotation_head(fused_features)
 
-        return rotation_angle
+        return 0

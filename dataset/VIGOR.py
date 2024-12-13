@@ -14,6 +14,11 @@ class VIGOR(Dataset):
         same_area = not args.cross_area
 
         self.image_size = args.image_size
+        # self.start_angle = args.start_angle
+        self.fov_size = args.fov_size
+        self.bev_size = args.bev_size
+
+
         label_root = 'splits'  # 'splits' splits__corrected
         if same_area:
             self.train_city_list = ['NewYork', 'Seattle', 'SanFrancisco',
@@ -63,10 +68,10 @@ class VIGOR(Dataset):
 
         self.split = split
         # self.transform = train_transform(0) if 'augment' in args and args.augment else None
-        self.transform = None
-        self.center = [(self.image_size / 2, self.image_size / 2),
-                       (self.image_size / 2, self.image_size / 2 - self.image_size / 8)] \
-            if 'orien' in args and args.orien else [(self.image_size // 2.0, self.image_size // 2.0), ]
+        # self.transform = None
+        # self.center = [(self.image_size / 2, self.image_size / 2),
+        #                (self.image_size / 2, self.image_size / 2 - self.image_size / 8)] \
+        #     if 'orien' in args and args.orien else [(self.image_size // 2.0, self.image_size // 2.0), ]
         pona_path = self.pano_list[0]
         pona = cv2.imread(pona_path, 1)[:, :, ::-1]  # BGR ==> RGB
         self.out = get_BEV_projection(pona, self.image_size, self.image_size, Fov=85 * 2, dty=0, dy=0)
@@ -89,27 +94,37 @@ class VIGOR(Dataset):
         sat = cv2.resize(sat, (patch_size, patch_size))
 
         # =================== read ground map ===================================
-        pona = cv2.imread(pona_path, 1)[:, :, ::-1]
+        pano = cv2.imread(pona_path, 1)[:, :, ::-1]
 
-        rotation_range = self.ori_noise
-        random_ori = np.random.uniform(-1, 1) * rotation_range / 360
-        ori_angle = random_ori * 360
-        pona = np.roll(pona, int(random_ori * pona.shape[1]), axis=1)
+        # =================== get masked pano ===================================
+        mask = np.zeros_like(pano)
+        h, w, c = pano.shape
+        # start_angle = np.random.randint(1, 360-self.fov_size)
+        start_angle = 0
+        w_start, w_end = w // 360 * start_angle, w // 360 * (start_angle + self.fov_size)
+        mask[:, :, w_start:w_end] = pano[:, :, w_start:w_end]
+        pano = mask
 
-        pona_bev = get_BEV_tensor(pona, 500, 500, dty=0, dy=0, out=self.out).numpy().astype(np.uint8)
-        pona_bev = cv2.resize(pona_bev, (patch_size, patch_size))
-        img1 = torch.from_numpy(pona_bev).float().permute(2, 0, 1)
+        # rotation_range = self.ori_noise
+        # random_ori = np.random.uniform(-1, 1) * rotation_range / 360
+        # ori_angle = random_ori * 360
+        # pano = np.roll(pano, int(random_ori * pano.shape[1]), axis=1)
 
-        img2 = torch.from_numpy(sat).float().permute(2, 0, 1)
+        pano_bev = get_BEV_tensor(pano, 500, 500, dty=0, dy=0, out=self.out).numpy().astype(np.uint8)
+        pano_bev = cv2.resize(pano_bev, (self.bev_size, self.bev_size))
+        bev = torch.from_numpy(pano_bev).float().permute(2, 0, 1)
+
+        sat = torch.from_numpy(sat).float().permute(2, 0, 1)
         pano_gps = torch.from_numpy(pano_gps)  # [batch, 2]
         sat_gps = torch.from_numpy(sat_gps)
 
         sat_delta_init = torch.from_numpy(self.sat_delta[idx][select_] * patch_size / 640.0).float()
         sat_delta = torch.zeros(2)
         sat_delta[1] = sat_delta_init[0] + patch_size / 2.0
-        sat_delta[0] = patch_size / 2.0 - sat_delta_init[1]  # 从 [y, x] To [x, y], so fit the coord of model out
+        sat_delta[0] = patch_size / 2.0 - sat_delta_init[1]  # from [y, x] To [x, y], so fit the coord of model out
 
-        return img1, img2, pano_gps, sat_gps, torch.tensor(ori_angle), sat_delta
+        # return img1, img2, pano_gps, sat_gps, torch.tensor(ori_angle), sat_delta
+        return bev, sat, pano_gps, sat_gps, sat_delta
 
 
 def fetch_dataloader(args, split='train'):

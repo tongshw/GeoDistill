@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 import time
 
 import torch
@@ -17,7 +17,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from model.Network import RotationPredictionNet
+from model.Network import LocationPredictionNet
 from model.loss import RotationLoss
 from utils.util import setup_seed, print_colored, count_parameters, visualization, TextColors
 from dataset.VIGOR import fetch_dataloader
@@ -40,18 +40,24 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, grd_gps, sat_gps, ori_angle, sat_delta = [x.to(device) for x in data_blob]
+        bev, sat, grd_gps, sat_gps, sat_delta = [x.to(device) for x in data_blob]
 
+        plt.imshow((bev[0]).permute(1,2,0).cpu().numpy().astype(np.uint8))
+        plt.axis('on')
+        plt.show()
+        plt.imshow(sat[0].permute(1,2,0).cpu().numpy().astype(np.uint8))
+        plt.axis('on')
+        plt.show()
 
         # 清除梯度
         optimizer.zero_grad()
 
         # 前向传播
         # 根据你的网络结构调整输入
-        pred_label = model(sat, bev)  # 或者 model(bev, sat)
+        pred_label = model(sat, bev)
 
         # 计算损失
-        loss = criterion(pred_label, soft_rotation_label)
+        loss = criterion()
 
         # 反向传播
         loss.backward()
@@ -93,30 +99,29 @@ def validate(args, model, val_loader, criterion, device, vis=False):
             # 前向传播
             pred_label = model(sat, bev)
 
-            err, mean_err, median_err = calculate_errors(gt_ori, pred_label)
-
-            # 计算损失
-            loss = criterion(pred_label, soft_rotation_label)
+            # err, mean_err, median_err = calculate_errors(gt_ori, pred_label)
+            #
+            # # 计算损失
+            # loss = criterion(pred_label, soft_rotation_label)
 
             # 计算平均绝对误差
             # mae = torch.mean(torch.abs(pred_label - rotation_label))
 
             # 累计损失和误差
-            total_loss += loss.item()
-            # total_mae += mae.item()
-            total_mean += mean_err.item()
-
-            all_errors.extend(err.cpu().numpy())
-
-            # 更新进度条
-            pbar.set_postfix({
-                'val_batch_loss': f'{loss.item():.4f}',
-                'mean_rotation_err': f'{mean_err.item():.4f}'
-            })
+            # total_loss += loss.item()
+            # # total_mae += mae.item()
+            # total_mean += mean_err.item()
+            #
+            # all_errors.extend(err.cpu().numpy())
+            #
+            # # 更新进度条
+            # pbar.set_postfix({
+            #     'val_batch_loss': f'{loss.item():.4f}',
+            #     'mean_rotation_err': f'{mean_err.item():.4f}'
+            # })
 
             if vis:
-                predicted_labels = torch.argmax(pred_label, dim=1)
-                visualization(bev, sat, sat_delta, ori_angle, predicted_labels - 45)
+                visualization(bev, sat, sat_delta, ori_angle)
 
     # 计算平均指标
     avg_loss = total_loss / len(val_loader)
@@ -137,7 +142,7 @@ def train(args):
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=nw)
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, pin_memory=True, num_workers=nw)
 
-    model = RotationPredictionNet(args, num_classes=args.ori_noise * 2).to(device)
+    model = LocationPredictionNet(args).to(device)
 
     # 损失函数
     criterion = nn.CrossEntropyLoss()
@@ -201,7 +206,7 @@ def test(args):
 
     test_loader = fetch_dataloader(args, split="test")
 
-    model = RotationPredictionNet(args, num_classes=args.ori_noise * 2).to(device)
+    model = LocationPredictionNet(args).to(device)
 
     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
     criterion = nn.CrossEntropyLoss()

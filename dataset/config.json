@@ -1,11 +1,5 @@
 {
-    "gpuid": [0],
-    "mixed_precision": false,
-    "iters_lev0": 6,
-    "lev0": true,
-    "flow": true,
     "p_siamese": true,
-    "CNN16": true,
 
     "dataset": "vigor",
     "orig_label": false,
@@ -30,13 +24,12 @@
     "clip": 1.0,
     "gamma": 0.85 ,
 
-    "name": "HC-Net ",
-    "validation": [],
-
 
     "image_size": 512,
     "sat_size": 640,
     "zoom": 20,
+    "fov_size": 270,
+    "bev_size": 430,
 
     "IMG_FREQ": 20000,
     "SUM_FREQ": 100,

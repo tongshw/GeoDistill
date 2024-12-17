@@ -10,39 +10,43 @@ import torchvision.models as models
 from model.efficientnet_pytorch import EfficientNet
 
 
-class ResNetBackbone(nn.Module):
-    def __init__(self, feature_dim=512, pretrained=True):
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-        resnet = models.resnet50(pretrained=pretrained)
-
-        # 分阶段特征提取
-        self.early_features = nn.Sequential(
-            resnet.conv1,
-            resnet.bn1,
-            resnet.relu,
-            resnet.maxpool
-        )
-
-        self.layer1 = resnet.layer1
-        self.layer2 = resnet.layer2
-        self.layer3 = resnet.layer3
-        self.layer4 = resnet.layer4
-
-        # 特征调整
-        self.feature_adjust = nn.Conv2d(2048, feature_dim, kernel_size=1)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU()
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1) \
+            if in_channels != out_channels else nn.Identity()
 
     def forward(self, x):
-        # 逐层特征提取
-        x = self.early_features(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
+        shortcut = self.shortcut(x)
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        return self.relu(x + shortcut)
 
-        # 通道调整
-        x = self.feature_adjust(x)
+class SEBlock(nn.Module):
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+        self.fc1 = nn.Linear(channels, channels // reduction)
+        self.fc2 = nn.Linear(channels // reduction, channels)
+        self.sigmoid = nn.Sigmoid()
 
-        return x
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        squeeze = x.view(b, c, -1).mean(dim=2)  # 全局平均池化
+        excitation = self.fc1(squeeze)
+        excitation = F.relu(excitation)
+        excitation = self.fc2(excitation)
+        excitation = self.sigmoid(excitation).view(b, c, 1, 1)
+        return x * excitation
+
+
 class FeatureUpsampler(nn.Module):
     def __init__(self, in_channels, grid_size=16):
         super().__init__()
@@ -104,8 +108,20 @@ class CrossAttention(nn.Module):
         return out
 
 
+class MultiLayerCrossAttention(nn.Module):
+    def __init__(self, feature_dim, num_layers=3):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            CrossAttention(feature_dim) for _ in range(num_layers)
+        ])
+
+    def forward(self, feat1, feat2):
+        for layer in self.layers:
+            feat1 = layer(feat1, feat2)
+        return feat1
+
 class AttentionGridRegistrationNet(nn.Module):
-    def __init__(self, args, grid_size=16):
+    def __init__(self, args, grid_size=8):
         super().__init__()
 
         # 保持原有的EfficientNet特征提取器
@@ -128,7 +144,8 @@ class AttentionGridRegistrationNet(nn.Module):
         feature_dim = 320
 
         # 添加CrossAttention
-        self.cross_attention = CrossAttention(feature_dim)
+        # self.cross_attention = CrossAttention(feature_dim)
+        self.cross_attention = MultiLayerCrossAttention(feature_dim, num_layers=3)
 
         # 特征融合改进
         self.feature_fusion = nn.Sequential(
@@ -142,10 +159,11 @@ class AttentionGridRegistrationNet(nn.Module):
 
         # 网格分类分支改进
         self.grid_cls_branch = nn.Sequential(
-            nn.Conv2d(feature_dim, feature_dim // 2, 3, padding=1),
+            nn.Conv2d(feature_dim, feature_dim // 2, kernel_size=3, padding=1),
             nn.BatchNorm2d(feature_dim // 2),
             nn.ReLU(),
-            nn.Conv2d(feature_dim // 2, grid_size ** 2, 1),
+            SEBlock(feature_dim // 2),
+            nn.Conv2d(feature_dim // 2, grid_size ** 2, kernel_size=1),
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
             nn.Linear(grid_size ** 2, grid_size ** 2),
@@ -234,7 +252,6 @@ class AttentionGridRegistrationNet(nn.Module):
 
         return grid_cls, pred_coords
 
-        return grid_cls, coord_offset
 
 import torch
 import torch.nn as nn
@@ -243,7 +260,7 @@ import math
 
 
 class GridRegistrationLoss(nn.Module):
-    def __init__(self, grid_size=8, img_size=512, cls_weight=10, reg_weight=1.0, sigma=1.0):
+    def __init__(self, grid_size=8, img_size=512, cls_weight=10, reg_weight=1.0, sigma=0.8):
         super().__init__()
         self.grid_size = grid_size
         self.img_size = img_size
@@ -301,15 +318,13 @@ class GridRegistrationLoss(nn.Module):
         # 分类损失 (基于高斯平滑标签的交叉熵)
         pred_cls_probs = F.log_softmax(pred_cls, dim=1)  # (B, grid_size^2)
         cls_loss = -torch.sum(smooth_labels * pred_cls_probs) / batch_size
-        cls_loss *= self.cls_weight
 
         # 回归损失
         pred_coords = coord_offset.squeeze(-1).squeeze(-1)  # (B, 2)
-        reg_loss = F.smooth_l1_loss(pred_coords, gt_coords) * self.reg_weight
+        reg_loss = F.smooth_l1_loss(pred_coords, gt_coords)
 
-        total_loss = cls_loss + reg_loss
 
-        return total_loss
+        return cls_loss, reg_loss
 
 
 # 训练器

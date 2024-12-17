@@ -66,9 +66,11 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
                     sat_delta[i][1].cpu().numpy(),  # sat_delta_y 偏移
                     color="red",
                     label="sat_delta"
+
                 )
 
                 # 添加网格线
+
                 grid_size = 4
                 step = 512 // grid_size  # 每个网格的间隔 (32 像素)
                 for j in range(1, grid_size):
@@ -89,10 +91,11 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
         optimizer.zero_grad()
 
         # 前向传播
-        pred_cls, full_res_pred = model(sat, bev)
+        pred_cls, coord_offset = model(sat, bev)
 
         # 计算损失
-        loss = criterion(pred_cls, full_res_pred, sat_delta)
+        cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
+        loss = 1000 * cls_loss + 1 * reg_loss
 
         # 反向传播
         loss.backward()
@@ -108,7 +111,8 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
 
         # 更新进度条
         pbar.set_postfix({
-            'batch_loss': f'{loss.item():.4f}',
+            'cls_loss': f'{cls_loss.item():.4f}',
+            'reg_loss': f'{reg_loss.item():.4f}',
             'avg_loss': f'{total_loss / (i_batch + 1):.4f}'
         })
 
@@ -130,19 +134,19 @@ def validate(args, model, val_loader, criterion, device, vis=False):
             bev, sat, pano_gps, sat_gps, sat_delta = [x.to(device) for x in data_blob]
 
             # 前向传播
-            pred_cls, pred_coords = model(sat, bev)
+            pred_cls, coord_offset = model(sat, bev)
 
             # 计算损失
-            loss = criterion(pred_cls, pred_coords, sat_delta)
-            total_loss += loss.item()
+            cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
+            loss = 100 * cls_loss + 1 * reg_loss
 
             # 计算定位误差（像素距离）
-            errors = torch.norm(pred_coords.float() - sat_delta.float(), dim=1)
+            errors = torch.norm(coord_offset.float() - sat_delta.float(), dim=1)
             all_errors.extend(errors.cpu().numpy())
 
             # 可视化（可选）
             if vis and i_batch % args.vis_freq == 0:
-                visualization(bev, sat, pred_coords, sat_delta)
+                visualization(bev, sat, coord_offset, sat_delta)
 
             # 更新进度条
             pbar.set_postfix({
@@ -241,7 +245,7 @@ def train(args):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=args.epochs,
-        eta_min=1e-5
+        eta_min=1e-4
     )
 
     # 训练循环

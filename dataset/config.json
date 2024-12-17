@@ -29,8 +29,8 @@
     "sat_size": 640,
     "zoom": 20,
     "fov_size": 360,
-    "bev_size": 512,
-    "grid_size": 16,
+    "bev_size": 320,
+    "grid_size": 8,
 
     "IMG_FREQ": 20000,
     "SUM_FREQ": 100,

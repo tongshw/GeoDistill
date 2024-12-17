@@ -28,12 +28,14 @@
     "image_size": 512,
     "sat_size": 640,
     "zoom": 20,
-    "fov_size": 270,
-    "bev_size": 430,
+    "fov_size": 360,
+    "bev_size": 512,
+    "grid_size": 16,
 
     "IMG_FREQ": 20000,
     "SUM_FREQ": 100,
+    "vis_freq": 100,
 
-    "visualization": false,
+    "visualize": false,
     "hist": false
 }

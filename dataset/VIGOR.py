@@ -101,8 +101,10 @@ class VIGOR(Dataset):
         h, w, c = pano.shape
         # start_angle = np.random.randint(1, 360-self.fov_size)
         start_angle = 0
-        w_start, w_end = w // 360 * start_angle, w // 360 * (start_angle + self.fov_size)
-        mask[:, :, w_start:w_end] = pano[:, :, w_start:w_end]
+        w_start, w_end = w / 360 * start_angle, w / 360 * (start_angle + self.fov_size)
+        w_start = int(np.round(w_start))
+        w_end = int(np.round(w_end))
+        mask[:, w_start:w_end, :] = pano[:, w_start:w_end, :]
         pano = mask
 
         # rotation_range = self.ori_noise
@@ -111,6 +113,7 @@ class VIGOR(Dataset):
         # pano = np.roll(pano, int(random_ori * pano.shape[1]), axis=1)
 
         pano_bev = get_BEV_tensor(pano, 500, 500, dty=0, dy=0, out=self.out).numpy().astype(np.uint8)
+        # pano_bev = cv2.resize(pano_bev, (patch_size, patch_size))
         pano_bev = cv2.resize(pano_bev, (self.bev_size, self.bev_size))
         bev = torch.from_numpy(pano_bev).float().permute(2, 0, 1)
 

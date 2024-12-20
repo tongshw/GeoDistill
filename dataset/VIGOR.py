@@ -139,8 +139,8 @@ class VIGOR(Dataset):
 
         sat_delta_init2 = torch.from_numpy(self.sat_delta[idx][select_] * patch_size / 640.0).float()
 
-        gt_shift_y = sat_delta_init2[1] / 512 * 4  # -L/4 ~ L/4  -1 ~ 1
-        gt_shift_x = -sat_delta_init2[0] / 512 * 4  #
+        gt_shift_y = sat_delta_init2[0] / 512 * 4  # -L/4 ~ L/4  -1 ~ 1
+        gt_shift_x = -sat_delta_init2[1] / 512 * 4  #
         sat_delta = [gt_shift_x, gt_shift_y]
 
 

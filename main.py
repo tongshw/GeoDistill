@@ -5,7 +5,7 @@ import os
 import cv2
 import numpy as np
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 import time
 
 import torch
@@ -147,7 +147,7 @@ def validate(args, model, val_loader, criterion, device, vis=False):
             bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano = [x.to(device) for x in data_blob]
 
             # 前向传播
-            sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict = model(sat, bev)
+            sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict = model(sat, pano, meter_per_pixel)
 
             corr = model.calc_corr_for_val(sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict)
 
@@ -331,7 +331,7 @@ if __name__ == '__main__':
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
 
-    parser.add_argument('--name', default="cross-nocrop", help="none")
+    parser.add_argument('--name', default="cross-proj-feat", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',

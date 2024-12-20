@@ -5,7 +5,7 @@ import os
 import cv2
 import numpy as np
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 import time
 
 import torch
@@ -91,7 +91,7 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
         optimizer.zero_grad()
 
         # 前向传播
-        sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict = model(sat, bev)
+        sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict = model(sat, pano, meter_per_pixel)
 
         corr_maps = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict)
 

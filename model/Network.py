@@ -1,5 +1,6 @@
 import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,385 +10,216 @@ import torchvision.models as models
 
 from model.efficientnet_pytorch import EfficientNet
 
+from VGG import VGGUnet
+import torchvision.transforms.functional as TF
 
-class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU()
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1) \
-            if in_channels != out_channels else nn.Identity()
-
-    def forward(self, x):
-        shortcut = self.shortcut(x)
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        return self.relu(x + shortcut)
-
-class SEBlock(nn.Module):
-    def __init__(self, channels, reduction=16):
-        super().__init__()
-        self.fc1 = nn.Linear(channels, channels // reduction)
-        self.fc2 = nn.Linear(channels // reduction, channels)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        squeeze = x.view(b, c, -1).mean(dim=2)  # 全局平均池化
-        excitation = self.fc1(squeeze)
-        excitation = F.relu(excitation)
-        excitation = self.fc2(excitation)
-        excitation = self.sigmoid(excitation).view(b, c, 1, 1)
-        return x * excitation
+from utils.util import grid_sample
 
 
-class FeatureUpsampler(nn.Module):
-    def __init__(self, in_channels, grid_size=16):
-        super().__init__()
-
-        # 逐步上采样的反卷积层
-        self.upsample = nn.Sequential(
-            # 第一次上采样：4x
-            nn.ConvTranspose2d(in_channels, in_channels // 2,
-                               kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(in_channels // 2),
-            nn.ReLU(),
-
-            # 第二次上采样：8x
-            nn.ConvTranspose2d(in_channels // 2, in_channels // 4,
-                               kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(in_channels // 4),
-            nn.ReLU(),
-
-            # 第三次上采样：16x
-            nn.ConvTranspose2d(in_channels // 4, in_channels // 8,
-                               kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(in_channels // 8),
-            nn.ReLU(),
-
-            # 最终上采样到全分辨率
-            nn.ConvTranspose2d(in_channels // 8, 2,
-                               kernel_size=4, stride=2, padding=1)
-        )
-
-    def forward(self, x):
-        return self.upsample(x)
-
-
-class CrossAttention(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.query = nn.Linear(dim, dim)
-        self.key = nn.Linear(dim, dim)
-        self.value = nn.Linear(dim, dim)
-        self.scale = dim ** -0.5
-
-    def forward(self, bev_feat, sat_feat):
-        B, C, H, W = bev_feat.shape
-
-        # 将特征图重塑为序列
-        bev_feat = bev_feat.flatten(2).transpose(1, 2)  # B, HW, C
-        sat_feat = sat_feat.flatten(2).transpose(1, 2)  # B, HW, C
-
-        # 计算attention
-        q = self.query(bev_feat)  # B, HW, C
-        k = self.key(sat_feat)  # B, HW, C
-        v = self.value(sat_feat)  # B, HW, C
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-
-        out = (attn @ v)  # B, HW, C
-        out = out.transpose(1, 2).reshape(B, C, H, W)
-        return out
-
-
-class MultiLayerCrossAttention(nn.Module):
-    def __init__(self, feature_dim, num_layers=3):
-        super().__init__()
-        self.layers = nn.ModuleList([
-            CrossAttention(feature_dim) for _ in range(num_layers)
-        ])
-
-    def forward(self, feat1, feat2):
-        for layer in self.layers:
-            feat1 = layer(feat1, feat2)
-        return feat1
-
-class AttentionGridRegistrationNet(nn.Module):
+class LocalizationNet(nn.Module):
     def __init__(self, args, grid_size=8):
         super().__init__()
 
+        self.levels = args.levels
+        self.channels = args.channels
+
         # 保持原有的EfficientNet特征提取器
         input_dim = 3
-        self.sat_efficientnet = EfficientNet.from_pretrained(
-            'efficientnet-b0',
-            circular=False,
-            in_channels=input_dim
-        )
-        self.grd_efficientnet = EfficientNet.from_pretrained(
-            'efficientnet-b0',
-            circular=False,
-            in_channels=input_dim
-        ) if args.p_siamese else None
-
-        self.sat_efficientnet._fc = nn.Identity()
-        if self.grd_efficientnet:
-            self.grd_efficientnet._fc = nn.Identity()
+        self.sat_VGG = VGGUnet(self.levels, self.channels)
+        self.grd_VGG = VGGUnet(self.levels, self.channels) if args.p_siamese else None
 
         feature_dim = 320
+        self.args.rotation_range = 0
 
-        # 添加CrossAttention
-        # self.cross_attention = CrossAttention(feature_dim)
-        self.cross_attention = MultiLayerCrossAttention(feature_dim, num_layers=3)
 
-        # 特征融合改进
-        self.feature_fusion = nn.Sequential(
-            nn.Conv2d(feature_dim * 2, feature_dim, 1),
-            nn.BatchNorm2d(feature_dim),
-            nn.ReLU(),
-            nn.Conv2d(feature_dim, feature_dim, 3, padding=1),
-            nn.BatchNorm2d(feature_dim),
-            nn.ReLU()
-        )
+    def sat2grd_uv(self, rot, shift_u, shift_v, level, H, W, meter_per_pixel):
+        '''
+        rot.shape = [B]
+        shift_u.shape = [B]
+        shift_v.shape = [B]
+        H: scalar  height of grd feature map, from which projection is conducted
+        W: scalar  width of grd feature map, from which projection is conducted
+        '''
 
-        # 网格分类分支改进
-        self.grid_cls_branch = nn.Sequential(
-            nn.Conv2d(feature_dim, feature_dim // 2, kernel_size=3, padding=1),
-            nn.BatchNorm2d(feature_dim // 2),
-            nn.ReLU(),
-            SEBlock(feature_dim // 2),
-            nn.Conv2d(feature_dim // 2, grid_size ** 2, kernel_size=1),
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            nn.Linear(grid_size ** 2, grid_size ** 2),
-            nn.Softmax(dim=1)
-        )
+        B = shift_u.shape[0]
 
-        # 坐标回归分支改进
-        self.coord_reg_branch = nn.Sequential(
-            nn.Conv2d(feature_dim, feature_dim // 2, 3, padding=1),
-            nn.BatchNorm2d(feature_dim // 2),
-            nn.ReLU(),
-            nn.Conv2d(feature_dim // 2, 2, 1)
-        )
+        # shift_u = shift_u / np.power(2, 3 - level)
+        # shift_v = shift_v / np.power(2, 3 - level)
 
-        self.feature_upsampler = FeatureUpsampler(feature_dim, grid_size)
+        S = 512 / np.power(2, 3 - level)
+        shift_u = shift_u * S / 4
+        shift_v = shift_v * S / 4
 
-        # 注意力机制改进
-        self.attention_weights = nn.Sequential(
-            nn.Conv2d(grid_size ** 2, feature_dim, 1),
-            nn.BatchNorm2d(feature_dim),
-            nn.ReLU(),
-            nn.Conv2d(feature_dim, feature_dim, 1),
-            nn.Sigmoid()
-        )
+        # shift_u = shift_u / 512 * S
+        # shift_v = shift_v / 512 * S
 
-        self.grid_size = grid_size
+        ii, jj = torch.meshgrid(torch.arange(0, S, dtype=torch.float32, device=shift_u.device),
+                                torch.arange(0, S, dtype=torch.float32, device=shift_u.device))
+        ii = ii.unsqueeze(dim=0).repeat(B, 1, 1)  # [B, S, S] v dimension
+        jj = jj.unsqueeze(dim=0).repeat(B, 1, 1)  # [B, S, S] u dimension
+
+        radius = torch.sqrt((ii-(S/2-0.5 + shift_v.reshape(-1, 1, 1)))**2 + (jj-(S/2-0.5 + shift_u.reshape(-1, 1, 1)))**2)
+
+        theta = torch.atan2(ii - (S / 2 - 0.5 + shift_v.reshape(-1, 1, 1)), jj - (S / 2 - 0.5 + shift_u.reshape(-1, 1, 1)))
+        theta = (-np.pi / 2 + (theta) % (2 * np.pi)) % (2 * np.pi)
+        theta = (theta + rot[:, None, None] * self.args.rotation_range / 180 * np.pi) % (2 * np.pi)
+
+        theta = theta / 2 / np.pi * W
+
+        # meter_per_pixel = self.meter_per_pixel_dict[city] * 512 / S
+        meter_per_pixel = meter_per_pixel * np.power(2, 3-level)
+        phimin = torch.atan2(radius * meter_per_pixel[:, None, None], torch.tensor(self.grd_height))
+        phimin = phimin / np.pi * H
+
+        uv = torch.stack([theta, phimin], dim=-1)
+
+        return uv
+
+
+
+    def project_grd_to_map(self, grd_feature, grd_confidence, rot, shift_u, shift_v, level, meter_per_pixel):
+        '''
+        grd_f.shape = [B, C, H, W]
+        shift_u.shape = [B]
+        shift_v.shape = [B]
+        '''
+        B, C, H, W = grd_feature.size()
+        uv = self.sat2grd_uv(rot, shift_u, shift_v, level, H, W, meter_per_pixel)  # [B, S, S, 2]
+        grd_f_trans, _ = grid_sample(grd_feature, uv)
+        if grd_confidence is not None:
+            grd_c_trans, _ = grid_sample(grd_confidence, uv)
+        else:
+            grd_c_trans = None
+        return grd_f_trans, grd_c_trans, uv
+
+
 
     def forward(self, sat_img, bev_img):
-        # 图像预处理
+
         sat_img = 2 * (sat_img / 255.0) - 1.0
         bev_img = 2 * (bev_img / 255.0) - 1.0
         sat_img = sat_img.contiguous()
         bev_img = bev_img.contiguous()
 
-        # 特征提取
-        _, multiscale_grd = self.grd_efficientnet.extract_features_multiscale(bev_img)
-        _, multiscale_sat = self.sat_efficientnet.extract_features_multiscale(sat_img)
+        sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
+        bev_feat_dict, bev_conf_dict = self.grd_VGG(bev_img)
 
-        grd_feat = multiscale_grd[15]
-        sat_feat = multiscale_sat[15]
+        # bev_feat_dict = {}
+        # bev_conf_dict = {}
+        # corr_maps = {}
 
-        # 应用CrossAttention
-        attended_feat = self.cross_attention(grd_feat, sat_feat)
+        # for _, level in enumerate(self.levels):
+        #     sat_feat = sat_feat_dict[level]
+        #     bev_feat = grd_feat_dict[level]
+        #     bev_conf = grd_conf_dict[level]
+        #
+        #     A = sat_feat.shape[-1]
 
-        # # 特征融合
-        # fused_features = self.feature_fusion(
-        #     torch.cat([attended_feat, grd_feat], dim=1)
-        # )
+            # crop_H = int(A * 0.4)
+            # crop_W = int(A * 0.4)
+            # bev_feat = TF.center_crop(bev_feat, [crop_H, crop_W])
+            # bev_conf = TF.center_crop(bev_conf, [crop_H, crop_W])
 
-        # 网格分类
-        grid_cls = self.grid_cls_branch(attended_feat)
-
-        # 注意力加权
-        attention_mask = self.attention_weights(
-            grid_cls.view(grid_cls.size(0), -1, 1, 1)
-        )
-        weighted_features = attended_feat * attention_mask
-
-        coord_offset = self.coord_reg_branch(weighted_features)  # (B, 2, 16, 16)
-
-        # 获取最可能的网格位置
-        grid_cls_flat = grid_cls.view(-1, self.grid_size, self.grid_size)  # (B, 16, 16)
-        max_prob_idx = torch.argmax(grid_cls_flat.view(grid_cls_flat.size(0), -1), dim=1)  # (B,)
-
-        # 计算选中网格的坐标
-        grid_y = max_prob_idx // self.grid_size
-        grid_x = max_prob_idx % self.grid_size
-
-        # 获取对应网格位置的偏移量
-        batch_indices = torch.arange(coord_offset.size(0)).to(coord_offset.device)
-        selected_offsets = coord_offset[batch_indices, :, grid_y, grid_x]  # (B, 2)
-
-        # 计算网格大小
-        cell_size = 512 // self.grid_size  # 假设输入图像大小为512
-
-        # 计算网格中心坐标
-        grid_center_x = (grid_x.float() + 0.5) * cell_size
-        grid_center_y = (grid_y.float() + 0.5) * cell_size
-
-        # 将偏移量转换为实际坐标（偏移量范围从[-1,1]转换到[-cell_size/2, cell_size/2]）
-        final_x = grid_center_x + selected_offsets[:, 0] * (cell_size / 2)
-        final_y = grid_center_y + selected_offsets[:, 1] * (cell_size / 2)
-
-        # 组合最终预测的坐标
-        pred_coords = torch.stack([final_x, final_y], dim=1)  # (B, 2)
-
-        return grid_cls, pred_coords
+            # bev_feat_dict[level] = bev_feat
+            # bev_conf_dict[level] = bev_conf
+            #
+            # B = bev_feat.shape[0]
+            #
+            # signal = sat_feat.repeat(1, B, 1, 1)  # [B(M), BC(NC), H, W] [8, 2048, 64, 64]
+            # kernel = bev_feat * bev_conf.pow(2)  # [8, 256, 25, 25]
+            # corr = F.conv2d(signal, kernel, groups=B)  # [8, 8, 40, 40], B=8
+            #
+            # # denominator
+            # denominator_sat = []
+            # sat_feat_pow = (sat_feat).pow(2)
+            # bev_conf_pow = bev_conf.pow(2)
+            # for i in range(0, B):
+            #     denom_sat = torch.sum(F.conv2d(sat_feat_pow[i, :, None, :, :], bev_conf_pow), dim=0)
+            #     denominator_sat.append(denom_sat)
+            # denominator_sat = torch.sqrt(torch.stack(denominator_sat, dim=0))  # [B (M), B (N), H, W]
+            #
+            # denom_grd = torch.linalg.norm((bev_feat * bev_conf).reshape(B, -1), dim=-1)  # [B]
+            # shape = denominator_sat.shape
+            # denominator_grd = denom_grd[None, :, None, None].repeat(shape[0], 1, shape[2], shape[3])
+            #
+            # denominator = denominator_sat * denominator_grd
+            #
+            # denominator = torch.maximum(denominator, torch.ones_like(denominator) * 1e-6)
+            #
+            # corr = 2 - 2 * corr / denominator  # [B, B, H, W]
+            #
+            # corr_maps[level] = corr
+            #
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
+        return sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict
+
+    def calc_corr_for_train(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict):
+        corr_maps = {}
+
+        for _, level in enumerate(self.levels):
+            sat_feat = sat_feat_dict[level]
+            sat_conf = sat_conf_dict[level]
+            bev_feat = bev_feat_dict[level]
+            bev_conf = bev_conf_dict[level]
+
+            B = bev_feat.shape[0]
+
+            signal = sat_feat.repeat(1, B, 1, 1)  # [B(M), BC(NC), H, W] [8, 2048, 64, 64]
+            kernel = bev_feat * bev_conf.pow(2)  # [8, 256, 25, 25]
+            corr = F.conv2d(signal, kernel, groups=B)  # [8, 8, 40, 40], B=8
+
+            # denominator
+            denominator_sat = []
+            sat_feat_pow = (sat_feat).pow(2)
+            bev_conf_pow = bev_conf.pow(2)
+            for i in range(0, B):
+                denom_sat = torch.sum(F.conv2d(sat_feat_pow[i, :, None, :, :], bev_conf_pow), dim=0)
+                denominator_sat.append(denom_sat)
+            denominator_sat = torch.sqrt(torch.stack(denominator_sat, dim=0))  # [B (M), B (N), H, W]
+
+            denom_grd = torch.linalg.norm((bev_feat * bev_conf).reshape(B, -1), dim=-1)  # [B]
+            shape = denominator_sat.shape
+            denominator_grd = denom_grd[None, :, None, None].repeat(shape[0], 1, shape[2], shape[3])
+
+            denominator = denominator_sat * denominator_grd
+
+            denominator = torch.maximum(denominator, torch.ones_like(denominator) * 1e-6)
+
+            corr = 2 - 2 * corr / denominator  # [B, B, H, W]
+
+            corr_maps[level] = corr
 
 
-class GridRegistrationLoss(nn.Module):
-    def __init__(self, grid_size=8, img_size=512, cls_weight=10, reg_weight=1.0, sigma=0.8):
-        super().__init__()
-        self.grid_size = grid_size
-        self.img_size = img_size
-        self.cls_weight = cls_weight
-        self.reg_weight = reg_weight
-        self.sigma = sigma  # 高斯分布的标准差
+        return corr_maps
 
-    def calculate_grid_index(self, pixel_coords):
-        grid_width = self.img_size // self.grid_size
-        grid_x = int(pixel_coords[0] // grid_width)
-        grid_y = int(pixel_coords[1] // grid_width)
-        return grid_x, grid_y
+    def calc_corr_for_val(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict):
+        level = self.levels[-1]
 
-    def gaussian_label(self, grid_x, grid_y):
-        """
-        生成高斯分布标签。
-        """
-        grid_indices = torch.zeros((self.grid_size, self.grid_size))
-        for y in range(self.grid_size):
-            for x in range(self.grid_size):
-                distance = (grid_x - x) ** 2 + (grid_y - y) ** 2
-                grid_indices[y, x] = math.exp(-distance / (2 * self.sigma ** 2))
-        grid_indices /= grid_indices.sum()  # 归一化，使概率和为1
-        return grid_indices.view(-1)
+        sat_feat = sat_feat_dict[level]
+        sat_conf = sat_conf_dict[level]
+        bev_feat = bev_feat_dict[level]
+        bev_conf = bev_conf_dict[level]
 
-    def get_predicted_coords(self, full_res_pred):
-        batch_size, _, height, width = full_res_pred.size()
-        pred_x = full_res_pred[:, 0]  # (B, H, W)
-        pred_y = full_res_pred[:, 1]  # (B, H, W)
+        B, C, crop_H, crop_W = bev_feat.shape
+        A = sat_feat.shape[2]
 
-        pred_coords = []
-        for i in range(batch_size):
-            x_max_idx = pred_x[i].argmax()
-            y_max_idx = pred_y[i].argmax()
+        signal = sat_feat.reshape(1, -1, A, A)  # [B, C, H, W]->[1, B*C, H, W]
+        kernel = bev_feat * bev_conf.pow(2)
+        corr = F.conv2d(signal, kernel, groups=B)[0]  # [B, H, W]
 
-            x_coord = x_max_idx % width
-            y_coord = y_max_idx // width
+        # denominator
+        sat_feat_pow = (sat_feat).pow(2).transpose(0, 1)  # [B, C, H, W]->[C, B, H, W]
+        g2s_conf_pow = bev_conf.pow(2)
+        denominator_sat = F.conv2d(sat_feat_pow, g2s_conf_pow, groups=B).transpose(0, 1)  # [B, C, H, W]
+        denominator_sat = torch.sqrt(torch.sum(denominator_sat, dim=1))  # [B, H, W]
 
-            pred_coords.append(torch.tensor([x_coord, y_coord]))
+        denom_grd = torch.linalg.norm((bev_feat * bev_conf).reshape(B, -1), dim=-1)  # [B]
+        shape = denominator_sat.shape
+        denominator_grd = denom_grd[:, None, None].repeat(1, shape[1], shape[2])
 
-        return torch.stack(pred_coords).to(full_res_pred.device)
+        denominator = denominator_sat * denominator_grd
 
-    def forward(self, pred_cls, coord_offset, gt_coords):
-        batch_size = gt_coords.size(0)
+        corr = corr / denominator
 
-        # 生成高斯平滑标签
-        smooth_labels = []
-        for i in range(batch_size):
-            grid_x, grid_y = self.calculate_grid_index(gt_coords[i])
-            smooth_label = self.gaussian_label(grid_x, grid_y).to(pred_cls.device)
-            smooth_labels.append(smooth_label)
-
-        smooth_labels = torch.stack(smooth_labels)  # (B, grid_size^2)
-
-        # 分类损失 (基于高斯平滑标签的交叉熵)
-        pred_cls_probs = F.log_softmax(pred_cls, dim=1)  # (B, grid_size^2)
-        cls_loss = -torch.sum(smooth_labels * pred_cls_probs) / batch_size
-
-        # 回归损失
-        pred_coords = coord_offset.squeeze(-1).squeeze(-1)  # (B, 2)
-        reg_loss = F.smooth_l1_loss(pred_coords, gt_coords)
-
-
-        return cls_loss, reg_loss
-
-
-# 训练器
-# class Trainer:
-#     def __init__(self, grid_size=16, img_size=512):
-#         self.model = AttentionGridRegistrationNet(grid_size)
-#         self.criterion = GridRegistrationLoss(grid_size, img_size)
-#         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
-#
-#     def train_step(self, sat_img, bev_img, gt_coords):
-#         # 清空梯度
-#         self.optimizer.zero_grad()
-#
-#         # 前向传播
-#         pred_cls, pred_reg = self.model(sat_img, bev_img)
-#
-#         # 计算损失
-#         loss = self.criterion(pred_cls, pred_reg, gt_coords)
-#
-#         # 反向传播
-#         loss.backward()
-#
-#         # 参数更新
-#         self.optimizer.step()
-#
-#         return loss.item()
-#
-#     def train(self, dataloader, epochs=30):
-#         for epoch in range(epochs):
-#             total_loss = 0
-#             for sat_img, bev_img, gt_coords in dataloader:
-#                 loss = self.train_step(sat_img, bev_img, gt_coords)
-#                 total_loss += loss
-#
-#             print(f"Epoch {epoch + 1}, Average Loss: {total_loss / len(dataloader)}")
-#
-#
-#
-# # 使用示例
-# def main():
-#     # 假设的数据加载器
-#     class DummyDataLoader:
-#         def __init__(self):
-#             self.data = [
-#                 (torch.randn(1, 3, 512, 512),  # sat_img
-#                  torch.randn(1, 3, 512, 512),  # bev_img
-#                  torch.tensor([256, 256]))  # gt_coords
-#                 for _ in range(100)
-#             ]
-#
-#         def __iter__(self):
-#             return iter(self.data)
-#
-#         def __len__(self):
-#             return len(self.data)
-#
-#     # 创建训练器
-#     trainer = Trainer()
-#
-#     # 使用虚拟数据训练
-#     dataloader = DummyDataLoader()
-#     trainer.train(dataloader)
-#
-#
-# if __name__ == "__main__":
-#     main()
+        return corr

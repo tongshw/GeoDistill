@@ -5,7 +5,7 @@ import os
 import cv2
 import numpy as np
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 import time
 
 import torch
@@ -18,11 +18,11 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from model.Network import AttentionGridRegistrationNet, GridRegistrationLoss
-from model.loss import RotationLoss
+from model.Network import LocalizationNet
+from model.loss import MultiScaleLoss, Weakly_supervised_loss_w_GPS_error
 from utils.util import setup_seed, print_colored, count_parameters, visualization, TextColors
 from dataset.VIGOR import fetch_dataloader
-
+import torch.nn.functional as F
 
 def load_trained_model(model, pth_file, device):
     # 加载保存的模型权重
@@ -41,7 +41,7 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta = [x.to(device) for x in data_blob]
+        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano = [x.to(device) for x in data_blob]
 
         # 可视化输入图像（可选）
         if args.visualize:
@@ -91,11 +91,17 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
         optimizer.zero_grad()
 
         # 前向传播
-        pred_cls, coord_offset = model(sat, bev)
+        sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict = model(sat, bev)
+
+        corr_maps = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict)
 
         # 计算损失
-        cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
-        loss = 1000 * cls_loss + 1 * reg_loss
+        # cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
+        corr_loss= Weakly_supervised_loss_w_GPS_error(corr_maps, sat_delta[:, 0], sat_delta[:, 1], args.levels, meter_per_pixel)
+
+        # loss = corr_loss + args.GPS_error_coe * GPS_loss
+        loss = corr_loss
+
 
         # 反向传播
         loss.backward()
@@ -111,8 +117,9 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
 
         # 更新进度条
         pbar.set_postfix({
-            'cls_loss': f'{cls_loss.item():.4f}',
-            'reg_loss': f'{reg_loss.item():.4f}',
+            # 'ce_loss': f'{loss_ce.item():.4f}',
+            # 'mse_loss': f'{loss_mse.item():.4f}',
+            'batch_loss': loss.item(),
             'avg_loss': f'{total_loss / (i_batch + 1):.4f}'
         })
 
@@ -125,57 +132,71 @@ def validate(args, model, val_loader, criterion, device, vis=False):
     total_loss = 0
     all_errors = []
 
+    pred_us = []
+    pred_vs = []
+
+    gt_us = []
+    gt_vs = []
+
     torch.cuda.empty_cache()
     with torch.no_grad():
         pbar = tqdm(val_loader, desc='Validation')
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
-            bev, sat, pano_gps, sat_gps, sat_delta = [x.to(device) for x in data_blob]
+            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano = [x.to(device) for x in data_blob]
 
             # 前向传播
-            pred_cls, coord_offset = model(sat, bev)
+            sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict = model(sat, bev)
 
-            # 计算损失
-            cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
-            loss = 100 * cls_loss + 1 * reg_loss
+            corr = model.calc_corr_for_val(sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict)
 
-            # 计算定位误差（像素距离）
-            errors = torch.norm(coord_offset.float() - sat_delta.float(), dim=1)
-            all_errors.extend(errors.cpu().numpy())
+            # # 计算损失
+            # cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
+            # loss = 100 * cls_loss + 1 * reg_loss
 
-            # 可视化（可选）
-            if vis and i_batch % args.vis_freq == 0:
-                visualization(bev, sat, coord_offset, sat_delta)
+            max_level = args.levels[-1]
 
-            # 更新进度条
-            pbar.set_postfix({
-                'val_loss': f'{loss.item():.4f}',
-                'mean_error': f'{errors.mean().item():.2f}px'
-            })
+            B, corr_H, corr_W = corr.shape
 
-    # 计算平均指标
-    num_batches = len(val_loader)
-    avg_loss = total_loss / num_batches
-    overall_mean_error = np.mean(all_errors)
-    overall_median_error = np.median(all_errors)
+            max_index = torch.argmax(corr.reshape(B, -1), dim=1)
+            pred_u = (max_index % corr_W - corr_W / 2)
+            pred_v = (max_index // corr_W - corr_H / 2)
 
-    # 计算不同阈值下的准确率
-    thresholds = [5, 10, 25, 50]
-    accuracy_at_thresholds = {}
-    for threshold in thresholds:
-        accuracy = (np.array(all_errors) < threshold).mean()
-        accuracy_at_thresholds[f'acc_{threshold}px'] = accuracy * 100
+            pred_u = pred_u * np.power(2, 3 - max_level) * meter_per_pixel
+            pred_v = pred_v * np.power(2, 3 - max_level) * meter_per_pixel
 
-    # 打印验证结果
-    print("\nValidation Results:")
-    print(f"Average Loss: {avg_loss:.4f}")
-    print(f"Mean Error: {overall_mean_error:.2f}px")
-    print(f"Median Error: {overall_median_error:.2f}px")
-    for threshold, accuracy in accuracy_at_thresholds.items():
-        print(f"Accuracy @ {threshold}: {accuracy:.2f}%")
+            pred_us.append(pred_u.data.cpu().numpy())
+            pred_vs.append(pred_v.data.cpu().numpy())
 
-    return avg_loss, overall_mean_error, overall_median_error
+            gt_shift_u = sat_delta[:, 0] * meter_per_pixel * 512 / 4
+            gt_shift_v = sat_delta[:, 1] * meter_per_pixel * 512 / 4
+
+            gt_us.append(gt_shift_u.data.cpu().numpy())
+            gt_vs.append(gt_shift_v.data.cpu().numpy())
+
+            # # 更新进度条
+            # pbar.set_postfix({
+            #     # 'val_loss': f'{loss.item():.4f}',
+            #     'mean_error': f'{errors.mean().item():.2f}px'
+            # })
+
+    pred_us = np.concatenate(pred_us, axis=0)
+    pred_vs = np.concatenate(pred_vs, axis=0)
+
+    gt_us = np.concatenate(gt_us, axis=0)
+    gt_vs = np.concatenate(gt_vs, axis=0)
+
+    distance = np.sqrt((pred_us - gt_us) ** 2 + (pred_vs - gt_vs) ** 2)  # [N]
+    init_dis = np.sqrt(gt_us ** 2 + gt_vs ** 2)
+
+    metrics = [1, 3, 5]
+
+    print(f"mean distance: {np.mean(distance):.4f}")
+    print(f"median distance: {np.median(distance):.4f}")
+
+
+    return np.mean(distance), np.median(distance)
 
 def visualization(bev, sat, pred_coords, gt_coords, save_path=None):
     """
@@ -221,19 +242,14 @@ def train(args):
     start_time = time.strftime('%Y%m%d_%H%M%S')
 
     # 数据加载
-    train_dataset, val_dataset = fetch_dataloader(args)
-    nw = min([os.cpu_count(), args.batch_size if args.batch_size > 1 else 0, 12])
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=nw)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, pin_memory=True, num_workers=nw)
+    train_loader, val_loader = fetch_dataloader(args)
+
 
     # 模型初始化
-    model = AttentionGridRegistrationNet(args).to(device)
+    model = LocalizationNet(args).to(device)
 
     # 损失函数
-    criterion = GridRegistrationLoss(
-        grid_size=args.grid_size,
-        img_size=args.image_size
-    )
+    criterion = MultiScaleLoss()
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -252,13 +268,13 @@ def train(args):
     best_val_mean_err = float('inf')
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch + 1}/{args.epochs}")
-        # val_loss, mean_error, median_error = validate(args, model, val_loader, criterion, device)
+        # mean_error, median_error = validate(args, model, val_loader, criterion, device)
 
         # 训练
         train_loss = train_epoch(args, model, train_loader, criterion, optimizer, device)
 
         # 验证
-        val_loss, mean_error, median_error = validate(args, model, val_loader, criterion, device)
+        mean_error, median_error = validate(args, model, val_loader, criterion, device)
 
         # 学习率调度
         scheduler.step()
@@ -277,7 +293,7 @@ def train(args):
         # 打印训练总结
         print(f"Epoch {epoch + 1} Summary:")
         print(f"Train Loss: {train_loss:.4f}")
-        print(f"Val Loss: {val_loss:.4f}")
+        # print(f"Val Loss: {val_loss:.4f}")
         print(f"Mean Error: {mean_error:.4f}")
         print(f"Median Error: {median_error:.4f}")
 
@@ -308,15 +324,17 @@ if __name__ == '__main__':
     parser.add_argument('--config', default="dataset/config.json", type=str, help="path of config file")
     parser.add_argument('--dropout', type=float, default=0.0)
     parser.add_argument('--start_step', type=int, default=0)
-    parser.add_argument('--batch_size', default=16, type=int)
+    parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
-    parser.add_argument('--epochs', type=int, default=16)
+    parser.add_argument('--epochs', type=int, default=12)
+    parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
+    parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
 
-    parser.add_argument('--name', default="cross-location", help="none")
+    parser.add_argument('--name', default="cross-nocrop", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
-    parser.add_argument('--cross_area', default=False, action='store_true',
+    parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
     parser.add_argument('--train', default=True)
 

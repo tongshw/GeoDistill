@@ -68,3 +68,74 @@ def visualization(bev, sat, sat_delta, ori_angle):
     # 调整布局并显示
     plt.tight_layout()
     plt.show()
+
+
+
+def grid_sample(image, optical, jac=None):
+    # values in optical within range of [0, H], and [0, W]
+    N, C, IH, IW = image.shape
+    _, H, W, _ = optical.shape
+
+    ix = optical[..., 0].view(N, 1, H, W)
+    iy = optical[..., 1].view(N, 1, H, W)
+
+    with torch.no_grad():
+        ix_nw = torch.floor(ix)  # north-west  upper-left-x
+        iy_nw = torch.floor(iy)  # north-west  upper-left-y
+        ix_ne = ix_nw + 1        # north-east  upper-right-x
+        iy_ne = iy_nw            # north-east  upper-right-y
+        ix_sw = ix_nw            # south-west  lower-left-x
+        iy_sw = iy_nw + 1        # south-west  lower-left-y
+        ix_se = ix_nw + 1        # south-east  lower-right-x
+        iy_se = iy_nw + 1        # south-east  lower-right-y
+
+        torch.clamp(ix_nw, 0, IW -1, out=ix_nw)
+        torch.clamp(iy_nw, 0, IH -1, out=iy_nw)
+
+        torch.clamp(ix_ne, 0, IW -1, out=ix_ne)
+        torch.clamp(iy_ne, 0, IH -1, out=iy_ne)
+
+        torch.clamp(ix_sw, 0, IW -1, out=ix_sw)
+        torch.clamp(iy_sw, 0, IH -1, out=iy_sw)
+
+        torch.clamp(ix_se, 0, IW -1, out=ix_se)
+        torch.clamp(iy_se, 0, IH -1, out=iy_se)
+
+    mask_x = (ix >= 0) & (ix <= IW - 1)
+    mask_y = (iy >= 0) & (iy <= IH - 1)
+    mask = mask_x * mask_y
+
+    assert torch.sum(mask) > 0
+
+    nw = (ix_se - ix) * (iy_se - iy) * mask
+    ne = (ix - ix_sw) * (iy_sw - iy) * mask
+    sw = (ix_ne - ix) * (iy - iy_ne) * mask
+    se = (ix - ix_nw) * (iy - iy_nw) * mask
+
+    image = image.view(N, C, IH * IW)
+
+    nw_val = torch.gather(image, 2, (iy_nw * IW + ix_nw).long().view(N, 1, H * W).repeat(1, C, 1)).view(N, C, H, W)
+    ne_val = torch.gather(image, 2, (iy_ne * IW + ix_ne).long().view(N, 1, H * W).repeat(1, C, 1)).view(N, C, H, W)
+    sw_val = torch.gather(image, 2, (iy_sw * IW + ix_sw).long().view(N, 1, H * W).repeat(1, C, 1)).view(N, C, H, W)
+    se_val = torch.gather(image, 2, (iy_se * IW + ix_se).long().view(N, 1, H * W).repeat(1, C, 1)).view(N, C, H, W)
+
+    out_val = (nw_val * nw + ne_val * ne + sw_val * sw + se_val * se)
+
+    if jac is not None:
+
+        dout_dpx = (nw_val * (-(iy_se - iy) * mask) + ne_val * (iy_sw - iy) * mask +
+                    sw_val * (-(iy - iy_ne) * mask) + se_val * (iy - iy_nw) * mask)
+        dout_dpy = (nw_val * (-(ix_se - ix) * mask) + ne_val * (-(ix - ix_sw) * mask) +
+                    sw_val * (ix_ne - ix) * mask + se_val * (ix - ix_nw) * mask)
+        dout_dpxy = torch.stack([dout_dpx, dout_dpy], dim=-1)  # [N, C, H, W, 2]
+
+        # assert jac.shape[1:] == [N, H, W, 2]
+        jac_new = dout_dpxy[None, :, :, :, :, :] * jac[:, :, None, :, :, :]
+        jac_new1 = torch.sum(jac_new, dim=-1)
+
+        if torch.any(torch.isnan(jac)) or torch.any(torch.isnan(dout_dpxy)):
+            print('Nan occurs')
+
+        return out_val, jac_new1 #jac_new1 #jac_new.permute(4, 0, 1, 2, 3)
+    else:
+        return out_val, None

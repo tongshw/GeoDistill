@@ -1,7 +1,7 @@
 import os
 
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset, random_split, Subset
 import torch.utils.data as data
 import cv2
 from geometry import get_BEV_tensor, get_BEV_projection
@@ -19,7 +19,7 @@ class VIGOR(Dataset):
         self.bev_size = args.bev_size
 
 
-        label_root = 'splits'  # 'splits' splits__corrected
+        label_root = 'splits__corrected'  # 'splits' splits__corrected
         if same_area:
             self.train_city_list = ['NewYork', 'Seattle', 'SanFrancisco',
                                     'Chicago']  # ['NewYork', 'Seattle', 'SanFrancisco', 'Chicago'] ['Seattle']
@@ -35,8 +35,8 @@ class VIGOR(Dataset):
 
         if split == 'train':
             for city in self.train_city_list:
-                label_fname = os.path.join(root, label_root, city, 'same_area_balanced_train.txt'
-                if same_area else 'pano_label_balanced.txt')
+                label_fname = os.path.join(root, label_root, city, 'same_area_balanced_train__corrected.txt'
+                if same_area else 'pano_label_balanced__corrected.txt')
                 with open(label_fname, 'r') as file:
                     for line in file.readlines():
                         data = np.array(line.split(' '))
@@ -49,8 +49,8 @@ class VIGOR(Dataset):
                         sat_delta.append(delta)
         else:
             for city in self.test_city_list:
-                label_fname = os.path.join(root, label_root, city, 'same_area_balanced_test.txt'
-                if same_area else 'pano_label_balanced.txt')
+                label_fname = os.path.join(root, label_root, city, 'same_area_balanced_test__corrected.txt'
+                if same_area else 'pano_label_balanced__corrected.txt')
                 with open(label_fname, 'r') as file:
                     for line in file.readlines():
                         data = np.array(line.split(' '))
@@ -65,6 +65,15 @@ class VIGOR(Dataset):
         self.pano_list = pano_list
         self.pano_label = pano_label
         self.sat_delta = sat_delta
+        from sklearn.utils import shuffle
+        for rand_state in range(20):
+            self.pano_list, self.pano_label, self.sat_delta = shuffle(self.pano_list, self.pano_label, self.sat_delta,
+                                                            random_state=rand_state)
+
+        self.meter_per_pixel_dict = {'NewYork': 0.113248 * 640 / 512,
+                                     'Seattle': 0.100817 * 640 / 512,
+                                     'SanFrancisco': 0.118141 * 640 / 512,
+                                     'Chicago': 0.111262 * 640 / 512}
 
         self.split = split
         # self.transform = train_transform(0) if 'augment' in args and args.augment else None
@@ -83,10 +92,10 @@ class VIGOR(Dataset):
 
     def __getitem__(self, idx):
         patch_size = self.image_size
-        pona_path = self.pano_list[idx]
+        pano_path = self.pano_list[idx]
         select_ = 0  # random.randint(0,3)
         sat_path = self.pano_label[idx][select_]
-        pano_gps = np.array(pona_path[:-5].split(',')[-2:]).astype(float)
+        pano_gps = np.array(pano_path[:-5].split(',')[-2:]).astype(float)
         sat_gps = np.array(sat_path[:-4].split('_')[-2:]).astype(float)
 
         # =================== read satellite map ===================================
@@ -94,7 +103,8 @@ class VIGOR(Dataset):
         sat = cv2.resize(sat, (patch_size, patch_size))
 
         # =================== read ground map ===================================
-        pano = cv2.imread(pona_path, 1)[:, :, ::-1]
+        pano = cv2.imread(pano_path, 1)[:, :, ::-1]
+        resized_pano = cv2.resize(pano, (320, 640))
 
         # =================== get masked pano ===================================
         mask = np.zeros_like(pano)
@@ -121,28 +131,125 @@ class VIGOR(Dataset):
         pano_gps = torch.from_numpy(pano_gps)  # [batch, 2]
         sat_gps = torch.from_numpy(sat_gps)
 
-        sat_delta_init = torch.from_numpy(self.sat_delta[idx][select_] * patch_size / 640.0).float()
-        sat_delta = torch.zeros(2)
-        sat_delta[1] = sat_delta_init[0] + patch_size / 2.0
-        sat_delta[0] = patch_size / 2.0 - sat_delta_init[1]  # from [y, x] To [x, y], so fit the coord of model out
+        # sat_delta_init = torch.from_numpy(self.sat_delta[idx][select_] * patch_size / 640.0).float()
+        # sat_delta = torch.zeros(2)
+        # sat_delta[1] = sat_delta_init[0] + patch_size / 2.0
+        # sat_delta[0] = patch_size / 2.0 - sat_delta_init[1]  # from [y, x] To [x, y], so fit the coord of model out
+
+
+        sat_delta_init2 = torch.from_numpy(self.sat_delta[idx][select_] * patch_size / 640.0).float()
+
+        gt_shift_y = sat_delta_init2[1] / 512 * 4  # -L/4 ~ L/4  -1 ~ 1
+        gt_shift_x = -sat_delta_init2[0] / 512 * 4  #
+        sat_delta = [gt_shift_x, gt_shift_y]
+
+
+
+        city = ""
+        if 'NewYork' in pano_path:
+            city = 'NewYork'
+        elif 'Seattle' in pano_path:
+            city = 'Seattle'
+        elif 'SanFrancisco' in pano_path:
+            city = 'SanFrancisco'
+        elif 'Chicago' in pano_path:
+            city = 'Chicago'
 
         # return img1, img2, pano_gps, sat_gps, torch.tensor(ori_angle), sat_delta
-        return bev, sat, pano_gps, sat_gps, sat_delta
+        return bev, sat, pano_gps, sat_gps, torch.tensor(sat_delta, dtype=torch.float32), torch.tensor(self.meter_per_pixel_dict[city], dtype=torch.float32), resized_pano
+
+
+class DistanceBatchSampler:
+    def __init__(self, sampler, batch_size, drop_last, train_label):
+        self.sampler = sampler
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+        self.backup = []
+        self.train_label = train_label
+
+    def check_add(self, id_list, idx):
+        '''
+        id_list: a list containing grd image indexes we currently have in a batch
+        idx: the grd image index to be determined where or not add to the current batch
+        '''
+
+        sat_idx = self.train_label[idx]
+        for id in id_list:
+            sat_id = self.train_label[id]
+            for i in sat_id:
+                if i in sat_idx:
+                    return False
+
+        return True
+
+    def __iter__(self):
+        batch = []
+
+        for idx in self.sampler:
+
+            if self.check_add(batch, idx):
+                # add to batch
+                batch.append(idx)
+
+            else:
+                # add to back up
+                self.backup.append(idx)
+
+            if len(batch) == self.batch_size:
+                yield batch
+                batch = []
+
+                remove = []
+                for i in range(len(self.backup)):
+                    idx = self.backup[i]
+
+                    if self.check_add(batch, idx):
+                        batch.append(idx)
+                        remove.append(i)
+
+                for i in sorted(remove, reverse=True):
+                    self.backup.remove(self.backup[i])
+
+        if len(batch) > 0 and not self.drop_last:
+            yield batch
+            print('batched all, left in backup:', len(self.backup))
+
+    def __len__(self):
+
+        if self.drop_last:
+            return len(self.sampler) // self.batch_size
+        else:
+            return (len(self.sampler) + self.batch_size - 1) // self.batch_size
+
 
 
 def fetch_dataloader(args, split='train'):
-    train_dataset = VIGOR(args, split)
-    print('Training with %d image pairs' % len(train_dataset))
+    vigor = VIGOR(args, split)
+    print('Training with %d image pairs' % len(vigor))
+
 
     if split == 'train':
-        train_size = int(0.8 * len(train_dataset))
-        val_size = len(train_dataset) - train_size
-        train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size])
-        print("using {} images for training, {} images for validation.".format(train_size, val_size))
-        return train_dataset, val_dataset
+
+        index_list = np.arange(vigor.__len__())
+        train_indices = index_list[0: int(len(index_list) * 0.8)]
+        val_indices = index_list[int(len(index_list) * 0.8):]
+        training_set = Subset(vigor, train_indices)
+        val_set = Subset(vigor, val_indices)
+
+        if not isinstance(vigor.pano_label, np.ndarray):
+            vigor.pano_label = np.array(vigor.pano_label)
+
+        train_bs = DistanceBatchSampler(torch.utils.data.RandomSampler(training_set), args.batch_size, True,
+                                        vigor.pano_label[np.array(train_indices, dtype=int)])
+
+        train_dataloader = DataLoader(training_set, batch_sampler=train_bs, num_workers=8)
+        val_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=8)
+
+        print("using {} images for training, {} images for validation.".format(len(training_set), len(val_set)))
+        return train_dataloader, val_dataloader
     else:
         nw = min([os.cpu_count(), args.batch_size if args.batch_size > 1 else 0, 8])  # number of workers
         print('Using {} dataloader workers every process'.format(nw))
-        test_loader = data.DataLoader(train_dataset, batch_size=args.batch_size,
+        test_loader = data.DataLoader(vigor, batch_size=args.batch_size,
                                       pin_memory=True, shuffle=False, num_workers=nw, drop_last=False)
         return test_loader

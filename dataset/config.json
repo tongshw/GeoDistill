@@ -29,8 +29,13 @@
     "sat_size": 640,
     "zoom": 20,
     "fov_size": 360,
-    "bev_size": 320,
+    "bev_size": 300,
     "grid_size": 8,
+
+    "levels": [0,2],
+    "channels": [64, 16, 4],
+    "GPS_error": 5,
+    "GPS_error_coe": 0,
 
     "IMG_FREQ": 20000,
     "SUM_FREQ": 100,

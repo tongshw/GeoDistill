@@ -11,13 +11,15 @@
     "scheduler": "OneCycle",
     "loss_w": [0.1, 1.0, 10.0],
     "temperature": 4.0,
+    "consitency_weight": 1,
+    "corr_weight": 10,
 
     "augment": false,
     "ori_noise": 45,
     "orien": true,
 
     "restore_ckpt": null,
-    "model": null,
+    "model": "/data/test/code/multi-local/location_model/cross-proj-feat_20241220_214334.pth",
 
     "wdecay": 0.0005,
     "epsilon": 1e-7,
@@ -28,9 +30,10 @@
     "image_size": 512,
     "sat_size": 640,
     "zoom": 20,
-    "fov_size": 360,
+    "fov_size": 270,
     "bev_size": 300,
     "grid_size": 8,
+
 
     "levels": [0,2],
     "channels": [64, 16, 4],

@@ -5,12 +5,11 @@ import os
 import cv2
 import numpy as np
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 import time
 
 import torch
 import wandb
-# import wandb
 from easydict import EasyDict
 from matplotlib import pyplot as plt, gridspec
 from torch import nn, optim
@@ -19,7 +18,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from model.Network import LocalizationNet
-from model.loss import MultiScaleLoss, Weakly_supervised_loss_w_GPS_error
+from model.loss import MultiScaleLoss, Weakly_supervised_loss_w_GPS_error, consistency_constraint
 from utils.util import setup_seed, print_colored, count_parameters, visualization, TextColors
 from dataset.VIGOR import fetch_dataloader
 import torch.nn.functional as F
@@ -41,7 +40,7 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano = [x.to(device) for x in data_blob]
+        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano = [x.to(device) for x in data_blob]
 
         # 可视化输入图像（可选）
         if args.visualize:
@@ -91,16 +90,28 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
         optimizer.zero_grad()
 
         # 前向传播
-        sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict = model(sat, pano, meter_per_pixel)
+        sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict,\
+         g2s2_feat_dict, g2s2_conf_dict, mask1, mask2 = model(sat, pano1, ones1, pano2, ones2, meter_per_pixel)
 
-        corr_maps = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict)
+        corr_maps1 = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, mask1)
+        corr_maps2 = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask2)
 
         # 计算损失
         # cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
-        corr_loss= Weakly_supervised_loss_w_GPS_error(corr_maps, sat_delta[:, 0], sat_delta[:, 1], args.levels, meter_per_pixel)
+        corr_loss1 = Weakly_supervised_loss_w_GPS_error(corr_maps1, sat_delta[:, 0], sat_delta[:, 1], args.levels, meter_per_pixel)
+        corr_loss2 = Weakly_supervised_loss_w_GPS_error(corr_maps2, sat_delta[:, 0], sat_delta[:, 1], args.levels,
+                                                        meter_per_pixel)
+        consistency_loss = consistency_constraint(corr_maps1, corr_maps2, args.levels)
 
         # loss = corr_loss + args.GPS_error_coe * GPS_loss
-        loss = corr_loss
+        loss = args.corr_weight * (corr_loss1 + corr_loss2) + args.consitency_weight * consistency_loss
+
+        if i_batch % 20 == 0:
+            wandb.log({'corr1_loss': corr_loss1,
+                       'corr2_loss': corr_loss2,
+                       'consistency_loss': consistency_loss,
+                       'total_loss': loss,})
+            # wandb.log({'loss per 100 steps': metrics['loss']})
 
 
         # 反向传播
@@ -144,10 +155,10 @@ def validate(args, model, val_loader, criterion, device, vis=False):
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
-            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano = [x.to(device) for x in data_blob]
+            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano = [x.to(device) for x in data_blob]
 
             # 前向传播
-            sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict = model(sat, pano, meter_per_pixel)
+            sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask1_dict = model(sat, resized_pano, None, None, None, meter_per_pixel)
 
             corr = model.calc_corr_for_val(sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict)
 
@@ -297,25 +308,27 @@ def train(args):
         print(f"Mean Error: {mean_error:.4f}")
         print(f"Median Error: {median_error:.4f}")
 
+    wandb.finish()
+
     return model
 
-# def test(args):
-#     device = torch.device("cuda:" + str(args.gpuid[0]))
-#
-#     nw = min([os.cpu_count(), args.batch_size if args.batch_size > 1 else 0, 12])  # number of workers
-#     print('Using {} dataloader workers every process'.format(nw))
-#
-#     test_loader = fetch_dataloader(args, split="test")
-#
-#     model = LocationPredictionNet(args).to(device)
-#
-#     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
-#     criterion = nn.CrossEntropyLoss()
-#     val_loss, mean_rotation, median_rotation = validate(args, model, test_loader, criterion, device, vis=False)
-#
-#     print(f"Val Loss: {val_loss:.4f}")
-#     print(f"mean rotation: {mean_rotation:.4f}")
-#     print(f"median rotation: {median_rotation:.4f}")
+def test(args):
+    device = torch.device("cuda:" + str(args.gpuid[0]))
+
+    nw = min([os.cpu_count(), args.batch_size if args.batch_size > 1 else 0, 12])  # number of workers
+    print('Using {} dataloader workers every process'.format(nw))
+
+    test_loader = fetch_dataloader(args, split="test")
+
+    model = LocalizationNet(args).to(device)
+
+    model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
+    criterion = nn.CrossEntropyLoss()
+    mean_error, median_error = validate(args, model, test_loader, criterion, device)
+
+    # print(f"Val Loss: {val_loss:.4f}")
+    print(f"mean rotation: {mean_error:.4f}")
+    print(f"median rotation: {median_error:.4f}")
 
 
 if __name__ == '__main__':
@@ -331,12 +344,12 @@ if __name__ == '__main__':
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
 
-    parser.add_argument('--name', default="cross-proj-feat", help="none")
+    parser.add_argument('--name', default="cross-proj-feat-infer", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
-    parser.add_argument('--train', default=True)
+    parser.add_argument('--train', default=False)
 
     parser.add_argument('--best_dis', type=float, default=1e8)
 
@@ -357,6 +370,8 @@ if __name__ == '__main__':
     if args.batch_size:
         config['batch_size'] = args.batch_size
 
+
+    wandb.init(project="proj_feat", name=args.name, config=config)
     print(config)
 
     setup_seed(2023)
@@ -369,5 +384,5 @@ if __name__ == '__main__':
     if args.train:
         train(config)
     else:
-        pass
-        # test(config)
+        # pass
+        test(config)

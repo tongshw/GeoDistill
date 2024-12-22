@@ -52,6 +52,29 @@ def Weakly_supervised_loss_w_GPS_error(corr_maps, gt_shift_u, gt_shift_v, levels
     # return torch.mean(torch.stack(matching_losses, dim=0)), torch.mean(torch.stack(GPS_error_losses, dim=0))
     return torch.mean(torch.stack(matching_losses, dim=0))
 
+def consistency_constraint(corr_maps1, corr_maps2, levels):
+    consistency_losses = []
+    for _, level in enumerate(levels):
+        corr1 = corr_maps1[level]
+        corr2 = corr_maps2[level]
+        B, B, H, W = corr1.shape
+        pos_corr1 = corr1[torch.arange(B), torch.arange(B)]
+        pos_corr2 = corr2[torch.arange(B), torch.arange(B)]
+
+        min_indices1 = torch.argmin(pos_corr1.view(B, -1), dim=1)
+        min_indices2 = torch.argmin(pos_corr2.view(B, -1), dim=1)
+
+        rows1 = min_indices1 // W
+        cols1 = min_indices1 % W
+
+        rows2 = min_indices2 // W
+        cols2 = min_indices2 % W
+
+        distance_l1 = torch.abs(rows1 - rows2) + torch.abs(cols1 - cols2)
+        consistency_losses.append(distance_l1)
+
+    return torch.mean(torch.stack(consistency_losses, dim=0).float())
+
 
 class MultiScaleLoss:
     def __init__(self, spatial_size=512, sigma=5):

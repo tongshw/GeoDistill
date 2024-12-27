@@ -5,7 +5,7 @@ import os
 import cv2
 import numpy as np
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 import time
 
 import torch
@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from model.Network import LocalizationNet
-from model.loss import MultiScaleLoss, Weakly_supervised_loss_w_GPS_error, consistency_constraint
+from model.loss import  Weakly_supervised_loss_w_GPS_error, consistency_constraint
 from utils.util import setup_seed, print_colored, count_parameters, visualization, TextColors
 from dataset.VIGOR import fetch_dataloader
 import torch.nn.functional as F
@@ -93,29 +93,33 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
         sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict,\
          g2s2_feat_dict, g2s2_conf_dict, mask1, mask2 = model(sat, pano1, ones1, pano2, ones2, meter_per_pixel)
 
-        corr_maps1 = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, mask1)
-        corr_maps2 = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask2)
+        corr_maps1 = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, None)
+        # corr_maps2 = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask2)
 
         # 计算损失
         # cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
         corr_loss1 = Weakly_supervised_loss_w_GPS_error(corr_maps1, sat_delta[:, 0], sat_delta[:, 1], args.levels, meter_per_pixel)
-        corr_loss2 = Weakly_supervised_loss_w_GPS_error(corr_maps2, sat_delta[:, 0], sat_delta[:, 1], args.levels,
-                                                        meter_per_pixel)
-        consistency_loss = consistency_constraint(corr_maps1, corr_maps2, args.levels)
+        # corr_loss2 = Weakly_supervised_loss_w_GPS_error(corr_maps2, sat_delta[:, 0], sat_delta[:, 1], args.levels,
+        #                                                 meter_per_pixel)
+        # corr_loss1=0
+        # corr_loss2=0
+
+
+        # consistency_loss = consistency_constraint(corr_maps1, corr_maps2, args.levels)
+
 
         # loss = corr_loss + args.GPS_error_coe * GPS_loss
-        loss = args.corr_weight * (corr_loss1 + corr_loss2) + args.consitency_weight * consistency_loss
+        # loss = args.corr_weight * (corr_loss1 + corr_loss2) # + args.consitency_weight * consistency_loss
 
-        if i_batch % 20 == 0:
-            wandb.log({'corr1_loss': corr_loss1,
-                       'corr2_loss': corr_loss2,
-                       'consistency_loss': consistency_loss,
-                       'total_loss': loss,})
-            # wandb.log({'loss per 100 steps': metrics['loss']})
+        loss = corr_loss1
+
+
+
 
 
         # 反向传播
         loss.backward()
+
 
         # 梯度裁剪
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -133,6 +137,13 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
             'batch_loss': loss.item(),
             'avg_loss': f'{total_loss / (i_batch + 1):.4f}'
         })
+
+        if config['wandb'] and i_batch % 20 == 0:
+            wandb.log({'corr1_loss': corr_loss1,
+                       # 'corr2_loss': corr_loss2,
+                       # 'consistency_loss': consistency_loss,
+                       'avg_loss': total_loss / (i_batch + 1),
+                       'batch_loss': loss,})
 
     # 返回平均损失
     return total_loss / len(train_loader)
@@ -202,12 +213,17 @@ def validate(args, model, val_loader, criterion, device, vis=False):
     init_dis = np.sqrt(gt_us ** 2 + gt_vs ** 2)
 
     metrics = [1, 3, 5]
+    mean_dis = np.mean(distance)
+    median_dis = np.median(distance)
 
-    print(f"mean distance: {np.mean(distance):.4f}")
-    print(f"median distance: {np.median(distance):.4f}")
+    wandb.log({'val_mean': mean_dis,
+               'val_median': median_dis, })
+
+    print(f"mean distance: {mean_dis:.4f}")
+    print(f"median distance: {median_dis:.4f}")
 
 
-    return np.mean(distance), np.median(distance)
+    return mean_dis, median_dis
 
 def visualization(bev, sat, pred_coords, gt_coords, save_path=None):
     """
@@ -260,7 +276,7 @@ def train(args):
     model = LocalizationNet(args).to(device)
 
     # 损失函数
-    criterion = MultiScaleLoss()
+    criterion = None
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -308,7 +324,7 @@ def train(args):
         print(f"Mean Error: {mean_error:.4f}")
         print(f"Median Error: {median_error:.4f}")
 
-    wandb.finish()
+
 
     return model
 
@@ -344,12 +360,12 @@ if __name__ == '__main__':
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
 
-    parser.add_argument('--name', default="cross-proj-feat-infer", help="none")
+    parser.add_argument('--name', default="cross-seed2022-fov360", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
-    parser.add_argument('--train', default=False)
+    parser.add_argument('--train', default=True)
 
     parser.add_argument('--best_dis', type=float, default=1e8)
 
@@ -370,11 +386,11 @@ if __name__ == '__main__':
     if args.batch_size:
         config['batch_size'] = args.batch_size
 
-
-    wandb.init(project="proj_feat", name=args.name, config=config)
+    if config['wandb']:
+        wandb.init(project="proj_feat", name=args.name, config=config)
     print(config)
 
-    setup_seed(2023)
+    setup_seed(2022)
     print_colored(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())))
 
     if not os.path.isdir('checkpoints'):
@@ -386,3 +402,8 @@ if __name__ == '__main__':
     else:
         # pass
         test(config)
+        # config['model'] = "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w50_20241221_194330.pth"
+        # test(config)
+
+    if config['wandb']:
+        wandb.finish()

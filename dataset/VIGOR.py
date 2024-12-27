@@ -1,6 +1,7 @@
 import os
 
 import torch
+from matplotlib import pyplot as plt
 from torch.utils.data import DataLoader, Dataset, random_split, Subset
 import torch.utils.data as data
 import cv2
@@ -177,6 +178,12 @@ class VIGOR(Dataset):
         gt_shift_x = -sat_delta_init2[1] / 512 * 4  #
         sat_delta = [gt_shift_x, gt_shift_y]
 
+        # plt.figure(figsize=(20, 10))  # 设置图大小
+        # plt.imshow(pano1)
+        # plt.title(f"pano 1")
+        # plt.axis("on")  # 关闭坐标轴
+        # plt.show()
+
 
 
         city = ""
@@ -285,6 +292,6 @@ def fetch_dataloader(args, split='train'):
     else:
         nw = min([os.cpu_count(), args.batch_size if args.batch_size > 1 else 0, 8])  # number of workers
         print('Using {} dataloader workers every process'.format(nw))
-        test_loader = data.DataLoader(vigor, batch_size=16,
+        test_loader = data.DataLoader(vigor, batch_size=8,
                                       pin_memory=True, shuffle=False, num_workers=nw, drop_last=False)
         return test_loader

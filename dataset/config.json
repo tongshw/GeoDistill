@@ -19,7 +19,7 @@
     "orien": true,
 
     "restore_ckpt": null,
-    "model": "/data/test/code/multi-local/location_model/cross-proj-feat_20241220_214334.pth",
+    "model": "/data/test/code/multi-local/location_model/cross-1pano-fov360_20241225_105952.pth",
 
     "wdecay": 0.0005,
     "epsilon": 1e-7,
@@ -30,7 +30,7 @@
     "image_size": 512,
     "sat_size": 640,
     "zoom": 20,
-    "fov_size": 270,
+    "fov_size": 360,
     "bev_size": 300,
     "grid_size": 8,
 
@@ -45,5 +45,6 @@
     "vis_freq": 100,
 
     "visualize": false,
-    "hist": false
+    "hist": false,
+    "wandb": true
 }

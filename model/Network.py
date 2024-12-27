@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 import torchvision.models as models
 
 from model.efficientnet_pytorch import EfficientNet
-
+from torchvision import transforms
 from VGG import VGGUnet
 import torchvision.transforms.functional as TF
 
@@ -102,16 +102,23 @@ class LocalizationNet(nn.Module):
         sat_img = 2 * (sat_img / 255.0) - 1.0
         pano1_img = 2 * (pano1 / 255.0) - 1.0
         pano2_img = 2 * (pano2 / 255.0) - 1.0
+        # sat_img = sat_img / 255.0
+        # pano1_img = pano1 / 255.0
+        # pano2_img = pano2 / 255.0
+
         sat_img = sat_img.contiguous()
         pano1_img = pano1_img.contiguous()
         pano2_img = pano2_img.contiguous()
 
         pano1_img = pano1_img.permute(0, 3, 1, 2)
         pano2_img = pano2_img.permute(0, 3, 1, 2)
+        pano1_zero = torch.sum(pano1_img == 0).item()
 
         sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
         pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
         pano2_feat_dict, pano2_conf_dict = self.grd_VGG(pano2_img)
+        feat1_zero = torch.sum(pano1_feat_dict[0] == 0).item()
+        conf1_zero = torch.sum(pano1_conf_dict[0] == 0).item()
 
 
         g2s1_feat_dict = {}
@@ -200,6 +207,10 @@ class LocalizationNet(nn.Module):
 
         sat_img = 2 * (sat_img / 255.0) - 1.0
         pano1_img = 2 * (pano1 / 255.0) - 1.0
+
+        # sat_img = sat_img / 255.0
+        # pano1_img = pano1 / 255.0
+
         sat_img = sat_img.contiguous()
         pano1_img = pano1_img.contiguous()
 
@@ -285,8 +296,8 @@ class LocalizationNet(nn.Module):
                 # plt.figure(figsize=(4, 4))  # 设置图大小
                 # plt.imshow(mask[0].cpu().detach().numpy(), cmap="viridis")  # 使用 viridis 颜色映射
                 # plt.colorbar(label="Confidence")  # 添加颜色条
-                # plt.title(f"Confidence Map ")
-                # plt.axis("off")  # 关闭坐标轴
+                # plt.title(f"bev mask ")
+                # plt.axis("on")  # 关闭坐标轴
                 # plt.show()
                 mask = mask.unsqueeze(1)
 

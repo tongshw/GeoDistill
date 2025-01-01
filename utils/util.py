@@ -1,8 +1,11 @@
+import os
 import random
 
+import cv2
 import numpy as np
 import torch
-from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt, gridspec
+from matplotlib.colors import Normalize
 
 
 def setup_seed(seed):
@@ -139,3 +142,102 @@ def grid_sample(image, optical, jac=None):
         return out_val, jac_new1 #jac_new1 #jac_new.permute(4, 0, 1, 2, 3)
     else:
         return out_val, None
+
+
+def save_visualization(fig, save_path):
+    """
+    保存 matplotlib 图像到指定路径。
+    如果路径不存在，则自动创建。
+
+    Parameters:
+        fig (matplotlib.figure.Figure): 要保存的 matplotlib 图像。
+        save_path (str): 图像保存路径（包括文件名和后缀）。
+
+    Returns:
+        None
+    """
+    # 获取目录部分
+    dir_path = os.path.dirname(save_path)
+
+    # 检查目录是否存在，不存在则创建
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+        print(f"Directory created: {dir_path}")
+
+    # 保存图像
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')  # 保存为高分辨率图像
+    # print(f"Figure saved to: {save_path}")
+
+def map_corr_to_center_keep_sat(corr_map, sat_img, alpha=0.6):
+    """
+    将 155x155 的相关性图映射到 512x512 卫星图的中心区域，同时保留卫星图的外围区域。
+    """
+    # Step 1: 将 155x155 的相关性图放大到 310x310
+    corr_map_resized = cv2.resize(corr_map.detach().cpu().numpy(), (310, 310), interpolation=cv2.INTER_CUBIC)
+    corr_map_resized = Normalize(vmin=corr_map_resized.min(), vmax=corr_map_resized.max())(corr_map_resized)
+
+    # Step 2: 将相关性图嵌入到 512x512 的中心
+    corr_map_centered = np.zeros((512, 512), dtype=np.float32)  # 初始化为全零图像
+    start_idx = (512 - 310) // 2  # 起始索引 (101, 101)
+    corr_map_centered[start_idx:start_idx + 310, start_idx:start_idx + 310] = corr_map_resized
+
+    # Step 3: 将相关性图转换为彩色
+    cmap = plt.cm.Reds  # 红色渐变
+    colored_corr_map = cmap(corr_map_centered)[:, :, :3]  # 去掉 Alpha 通道
+    colored_corr_map = (colored_corr_map * 255).astype(np.uint8)  # 转换为 RGB 图像
+
+    # Step 4: 使用遮罩仅叠加中心区域
+    sat_img_rgb = sat_img.permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)  # 卫星图转为 RGB
+    mask = corr_map_centered > 0  # 创建遮罩，仅保留相关性图的有效区域
+    for c in range(3):  # 对 RGB 通道分别处理
+        sat_img_rgb[:, :, c] = np.where(mask,
+                                        cv2.addWeighted(sat_img_rgb[:, :, c], 1 - alpha, colored_corr_map[:, :, c],
+                                                        alpha, 0),
+                                        sat_img_rgb[:, :, c])
+
+    return sat_img_rgb
+
+def vis_corr(corr_map, sat, bev, gt_point, pred_point, save_path=None, alpha=0.6):
+    # 处理相关性图（corr_map）
+    if corr_map.min() >= 0:
+        corr_map = -(corr_map - 2) / 2
+    overlay = map_corr_to_center_keep_sat(corr_map, sat, alpha)
+
+    # 创建画布
+    fig = plt.figure(figsize=(16, 8))  # 根据需要调整画布大小
+
+    # 使用 gridspec 定义布局
+    gs = gridspec.GridSpec(1, 2, width_ratios=[1, 640 / 320])  # 调整宽高比例
+
+    # 第一个子图：卫星图像和概率图叠加
+    ax1 = fig.add_subplot(gs[0])
+    ax1.imshow(overlay)  # Matplotlib 直接支持 RGB 图像
+    if gt_point is not None:
+        ax1.plot(gt_point[0].cpu().numpy(), gt_point[1].cpu().numpy(), marker='o', color='blue', markersize=8,
+                 label='GT')
+        ax1.legend(loc='upper right')
+    if pred_point is not None:
+        ax1.plot(pred_point[0].cpu().numpy(), pred_point[1].cpu().numpy(), marker='x', color='green', markersize=8,
+                 label='pred')
+        ax1.legend(loc='upper right')
+    ax1.axis('on')
+    ax1.set_title("Satellite Image with Probability Map")
+
+    # 第二个子图：BEV图像（彩色 RGB）
+    ax2 = fig.add_subplot(gs[1])
+    _, h, w = bev.shape
+    if h == w:
+        bev = bev.permute(1, 2, 0)
+    bev_img_rgb = bev.detach().cpu().numpy().astype(np.uint8)  # BEV 转换为 RGB
+    ax2.imshow(bev_img_rgb)
+    ax2.axis('on')
+    ax2.set_title("BEV Image")
+
+    # 调整布局
+    plt.tight_layout()
+
+    # 保存图像
+    if save_path:
+        save_visualization(fig, save_path)
+    plt.show()
+    # plt.close(fig)

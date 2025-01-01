@@ -27,7 +27,7 @@ y_mean = torch.sum(softmin_probs * y_coords[None, :, :], dim=(-2, -1))
 
 # 平滑坐标的欧几里得距离损失
 target_x, target_y = torch.tensor([5.0, 5.0]).to(corr_map.device)
-loss = torch.mean((x_mean - target_x)**2 + (y_mean - target_y)**2)
+loss = torch.mean(torch.abs((x_mean - target_x)) + torch.abs((y_mean - target_y)))
 
 # 反向传播
 loss.backward()

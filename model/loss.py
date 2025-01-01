@@ -67,8 +67,12 @@ def get_softmin_coordinates(softmin_probs):
     return torch.stack([x_mean, y_mean], dim=-1)  # 形状为 (batch, 2)
 
 
-def compute_kl_loss(corr_map1, corr_map2):
+def compute_kl_loss(corr_map1, corr_map2, temperature=0.1):
     epsilon = 1e-10  # 避免除零和 log(0)
+
+    # 引入温度参数，调整分布
+    corr_map1 = corr_map1 / temperature
+    corr_map2 = corr_map2 / temperature
 
     # 步骤 1: 归一化为概率分布
     P = corr_map1 / (torch.sum(corr_map1, dim=(1, 2), keepdim=True) + epsilon)
@@ -81,6 +85,7 @@ def compute_kl_loss(corr_map1, corr_map2):
     # 步骤 3: 平均 batch 的 KL 散度
     kl_loss = kl_loss.mean()
     return kl_loss
+
 
 
 def Weakly_supervised_loss_w_GPS_error(corr_maps, gt_shift_u, gt_shift_v, levels, meters_per_pixel, GPS_error=5):
@@ -128,7 +133,7 @@ def Weakly_supervised_loss_w_GPS_error(corr_maps, gt_shift_u, gt_shift_v, levels
     # return torch.mean(torch.stack(matching_losses, dim=0)), torch.mean(torch.stack(GPS_error_losses, dim=0))
     return torch.mean(torch.stack(matching_losses, dim=0))
 
-def consistency_constraint(corr_maps1, corr_maps2, levels):
+def consistency_constraint_soft_L1(corr_maps1, corr_maps2, levels):
     consistency_losses = []
     for _, level in enumerate(levels):
         corr1 = corr_maps1[level]
@@ -136,15 +141,40 @@ def consistency_constraint(corr_maps1, corr_maps2, levels):
         B, B, H, W = corr1.shape
         pos_corr1 = corr1[torch.arange(B), torch.arange(B)]
         pos_corr2 = corr2[torch.arange(B), torch.arange(B)]
-        # pos_corr1 = pos_corr1.unsqueeze(1)
-        # pos_corr2 = pos_corr2.unsqueeze
-        # soft_min1 = softmin(pos_corr1)
-        # soft_min2 = softmin(pos_corr2)
-        #
-        # soft_x1 = soft_min1 //W
-        # soft_x2 = soft_min2 //W
-        # soft_y1 = soft_min1 % W
-        # soft_y2 = soft_min2 % W
+        min_indices1 = torch.argmin(pos_corr1.view(B, -1), dim=1)
+        min_indices2 = torch.argmin(pos_corr2.view(B, -1), dim=1)
+
+        rows1 = min_indices1 // W
+        cols1 = min_indices1 % W
+
+        rows2 = min_indices2 // W
+        cols2 = min_indices2 % W
+
+        softmin_probs1 = softmin(pos_corr1, 0.001)
+        max_s = softmin_probs1.max()
+        softmin_probs2 = softmin(pos_corr2, 0.001)
+
+        # 计算平滑最小值坐标
+        coords1 = get_softmin_coordinates(softmin_probs1)  # 形状为 (batch, 2)
+        coords2 = get_softmin_coordinates(softmin_probs2)  # 形状为 (batch, 2)
+
+        # 计算欧几里得距离
+        # l2_loss = torch.norm(coords1 - coords2, dim=-1)
+        l1_loss = torch.sum(torch.abs(coords1 - coords2), dim=-1)
+
+        # # 返回批量平均损失
+        consistency_losses.append(l1_loss.mean())
+
+    return torch.mean(torch.stack(consistency_losses, dim=0).float())
+
+def consistency_constraint_KL_divergency(corr_maps1, corr_maps2, levels):
+    consistency_losses = []
+    for _, level in enumerate(levels):
+        corr1 = corr_maps1[level]
+        corr2 = corr_maps2[level]
+        B, B, H, W = corr1.shape
+        pos_corr1 = corr1[torch.arange(B), torch.arange(B)]
+        pos_corr2 = corr2[torch.arange(B), torch.arange(B)]
 
         min_indices1 = torch.argmin(pos_corr1.view(B, -1), dim=1)
         min_indices2 = torch.argmin(pos_corr2.view(B, -1), dim=1)
@@ -155,25 +185,10 @@ def consistency_constraint(corr_maps1, corr_maps2, levels):
         rows2 = min_indices2 // W
         cols2 = min_indices2 % W
 
-        # soft_x1, soft_y1 = soft_argmax(-pos_corr1)
-        # soft_x2, soft_y2 = soft_argmax(-pos_corr2)
-
-        # softmin_probs1 = softmin(pos_corr1, 0.05)
-        # max_s = softmin_probs1.max()
-        # softmin_probs2 = softmin(pos_corr2, 0.05)
-        #
-        # # 计算平滑最小值坐标
-        # coords1 = get_softmin_coordinates(softmin_probs1)  # 形状为 (batch, 2)
-        # coords2 = get_softmin_coordinates(softmin_probs2)  # 形状为 (batch, 2)
-        #
-        # # 计算欧几里得距离
-        # distance = torch.norm(coords1 - coords2, dim=-1)  # 形状为 (batch,)
         kl_1 = compute_kl_loss(pos_corr1, pos_corr2)
         kl_2 = compute_kl_loss(pos_corr2, pos_corr1)
-        delta = pos_corr1 - pos_corr2
-
-        # 返回批量平均损失
+        # delta = pos_corr1 - pos_corr2
+        #
         consistency_losses.append(kl_2.mean() + kl_1.mean())
 
     return torch.mean(torch.stack(consistency_losses, dim=0).float())
-

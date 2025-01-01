@@ -111,22 +111,29 @@ class VIGOR(Dataset):
         resized_pano = cv2.resize(pano, (640, 320))
         h, w, c = resized_pano.shape
 
-        start_angle1 = np.random.randint(0, self.fov_size)
+        # start_angle1 = np.random.randint(0, self.fov_size)
+        # w_start1 = int(np.round(w / 360 * start_angle1))
+        # w_end1 = int(np.round(w / 360 * (start_angle1 + 360 - self.fov_size)))
+        #
+        # if start_angle1 > self.masked_fov:
+        #     if (start_angle1 + self.masked_fov * 2) < 360:
+        #         valid_range = list(range(0, start_angle1 - self.masked_fov)) + list(range(start_angle1 + self.masked_fov, 360 - self.masked_fov))
+        #     else:
+        #         valid_range = list(range(0, start_angle1 - self.masked_fov))
+        # else:
+        #     valid_range = list(range(start_angle1 + self.masked_fov, 360 - self.masked_fov))
+        #
+        # start_angle2 = np.random.choice(valid_range)
+        #
+        # w_start2 = int(np.floor(w / 360 * start_angle2))
+        # w_end2 = int(np.floor(w / 360 * (start_angle2 + 360 - self.fov_size)))
+
+
+        start_angle1 = np.random.randint(0, 360 - self.masked_fov)
         w_start1 = int(np.round(w / 360 * start_angle1))
-        w_end1 = int(np.round(w / 360 * (start_angle1 + 360 - self.fov_size)))
+        w_end1 = int(np.round(w / 360 * (start_angle1 + self.masked_fov)))
 
-        if start_angle1 > self.masked_fov:
-            if (start_angle1 + self.masked_fov * 2) < 360:
-                valid_range = list(range(0, start_angle1 - self.masked_fov)) + list(range(start_angle1 + self.masked_fov, 360 - self.masked_fov))
-            else:
-                valid_range = list(range(0, start_angle1 - self.masked_fov))
-        else:
-            valid_range = list(range(start_angle1 + self.masked_fov, 360 - self.masked_fov))
 
-        start_angle2 = np.random.choice(valid_range)
-
-        w_start2 = int(np.floor(w / 360 * start_angle2))
-        w_end2 = int(np.floor(w / 360 * (start_angle2 + 360 - self.fov_size)))
 
         # 创建两个 mask，并应用到原图像上
         mask1 = np.zeros_like(resized_pano)
@@ -137,9 +144,11 @@ class VIGOR(Dataset):
         ones2 = np.ones_like(resized_pano)
 
         pano1[:, w_start1:w_end1, :] = mask1[:, w_start1:w_end1, :]
-        pano2[:, w_start2:w_end2, :] = mask2[:, w_start2:w_end2, :]
+        # pano2[:, w_start2:w_end2, :] = mask2[:, w_start2:w_end2, :]
         ones1[:, w_start1:w_end1, :] = mask1[:, w_start1:w_end1, :]
-        ones2[:, w_start2:w_end2, :] = mask2[:, w_start2:w_end2, :]
+        # ones2[:, w_start2:w_end2, :] = mask2[:, w_start2:w_end2, :]
+        ones2 = ones2 - ones1
+        pano2 = pano2 * ones2
 
         # =================== get masked pano ===================================
         # mask = np.zeros_like(pano)
@@ -292,6 +301,6 @@ def fetch_dataloader(args, split='train'):
     else:
         nw = min([os.cpu_count(), args.batch_size if args.batch_size > 1 else 0, 8])  # number of workers
         print('Using {} dataloader workers every process'.format(nw))
-        test_loader = data.DataLoader(vigor, batch_size=8,
+        test_loader = data.DataLoader(vigor, batch_size=16,
                                       pin_memory=True, shuffle=False, num_workers=nw, drop_last=False)
         return test_loader

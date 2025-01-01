@@ -11,15 +11,16 @@
     "scheduler": "OneCycle",
     "loss_w": [0.1, 1.0, 10.0],
     "temperature": 4.0,
-    "consitency_weight": 1,
-    "corr_weight": 10,
+    "consitency_weight": 100,
+    "corr_weight": 1,
 
     "augment": false,
     "ori_noise": 45,
     "orien": true,
 
     "restore_ckpt": null,
-    "model": "/data/test/code/multi-local/location_model/cross-1pano-fov360_20241225_105952.pth",
+    "model": "/data/test/code/multi-local/consistency_model/cross-nonscheduler-adam_20241230_091504.pth",
+    "save_path": "consistency_model",
 
     "wdecay": 0.0005,
     "epsilon": 1e-7,
@@ -44,7 +45,6 @@
     "SUM_FREQ": 100,
     "vis_freq": 100,
 
-    "visualize": false,
-    "hist": false,
+    "visualize": true,
     "wandb": true
 }

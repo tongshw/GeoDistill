@@ -335,16 +335,33 @@ class LocalizationNet(nn.Module):
 
         return corr_maps
 
-    def calc_corr_for_val(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict):
+    def calc_corr_for_val(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask_dict=None):
         level = self.levels[-1]
 
         sat_feat = sat_feat_dict[level]
         sat_conf = sat_conf_dict[level]
         bev_feat = bev_feat_dict[level]
         bev_conf = bev_conf_dict[level]
+        mask = None
+        if mask_dict is not None:
+            mask = mask_dict[level]
 
         B, C, crop_H, crop_W = bev_feat.shape
         A = sat_feat.shape[2]
+
+        if mask is not None:
+            mask = mask[:, 0, :, :]
+            # plt.figure(figsize=(4, 4))  # 设置图大小
+            # plt.imshow(mask[0].cpu().detach().numpy(), cmap="viridis")  # 使用 viridis 颜色映射
+            # plt.colorbar(label="Confidence")  # 添加颜色条
+            # plt.title(f"bev mask ")
+            # plt.axis("on")  # 关闭坐标轴
+            # plt.show()
+            mask = mask.unsqueeze(1)
+
+            bev_conf = bev_conf * mask
+            mask = mask.repeat(1, bev_feat.shape[1], 1, 1)
+            bev_feat = bev_feat * mask
 
         signal = sat_feat.reshape(1, -1, A, A)  # [B, C, H, W]->[1, B*C, H, W]
         kernel = bev_feat * bev_conf.pow(2)

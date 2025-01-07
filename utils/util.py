@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from matplotlib import pyplot as plt, gridspec
 from matplotlib.colors import Normalize
-
+import torch.nn.functional as F
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -197,10 +197,20 @@ def map_corr_to_center_keep_sat(corr_map, sat_img, alpha=0.6):
 
     return sat_img_rgb
 
-def vis_corr(corr_map, sat, bev, gt_point, pred_point, save_path=None, alpha=0.6):
+def vis_corr(corr_map, sat, bev, gt_point, pred_point, save_path=None, alpha=0.6, temp=1):
     # 处理相关性图（corr_map）
     if corr_map.min() >= 0:
         corr_map = -(corr_map - 2) / 2
+
+    h, w = corr_map.shape
+    corr_map_flat = corr_map.view(-1)  # 展平成向量，形状为 (h*w,)
+
+    # 对展平的相关性矩阵进行 softmax
+    corr_map_softmax = F.softmax(corr_map_flat/temp, dim=0)  # 按所有元素求 softmax
+
+    # 将 softmax 结果 reshape 回原来的 (h, w) 形状
+    corr_map = corr_map_softmax.view(h, w)
+
     overlay = map_corr_to_center_keep_sat(corr_map, sat, alpha)
 
     # 创建画布
@@ -221,7 +231,7 @@ def vis_corr(corr_map, sat, bev, gt_point, pred_point, save_path=None, alpha=0.6
                  label='pred')
         ax1.legend(loc='upper right')
     ax1.axis('on')
-    ax1.set_title("Satellite Image with Probability Map")
+    ax1.set_title(f"Satellite Image with Probability Map(t={temp})")
 
     # 第二个子图：BEV图像（彩色 RGB）
     ax2 = fig.add_subplot(gs[1])
@@ -237,7 +247,8 @@ def vis_corr(corr_map, sat, bev, gt_point, pred_point, save_path=None, alpha=0.6
     plt.tight_layout()
 
     # 保存图像
-    if save_path:
+    if save_path is not None:
         save_visualization(fig, save_path)
-    plt.show()
-    # plt.close(fig)
+    else:
+        plt.show()
+    plt.close(fig)

@@ -144,7 +144,7 @@ def grid_sample(image, optical, jac=None):
         return out_val, None
 
 
-def save_visualization(fig, save_path):
+def save_visualization(fig, save_path, dpi=300):
     """
     保存 matplotlib 图像到指定路径。
     如果路径不存在，则自动创建。
@@ -165,10 +165,10 @@ def save_visualization(fig, save_path):
         print(f"Directory created: {dir_path}")
 
     # 保存图像
-    fig.savefig(save_path, dpi=300, bbox_inches='tight')  # 保存为高分辨率图像
+    fig.savefig(save_path, format="jpeg", dpi=300, bbox_inches='tight')  # 保存为高分辨率图像
     # print(f"Figure saved to: {save_path}")
 
-def map_corr_to_center_keep_sat(corr_map, sat_img, alpha=0.6):
+def map_corr_to_center_keep_sat(corr_map, sat_img, alpha=0.4):
     """
     将 155x155 的相关性图映射到 512x512 卫星图的中心区域，同时保留卫星图的外围区域。
     """
@@ -199,7 +199,7 @@ def map_corr_to_center_keep_sat(corr_map, sat_img, alpha=0.6):
 
 def vis_corr(corr_map, sat, bev, gt_point, pred_point, save_path=None, alpha=0.6, temp=1):
     # 处理相关性图（corr_map）
-    if corr_map.min() >= 0:
+    if corr_map.max() > 1:
         corr_map = -(corr_map - 2) / 2
 
     h, w = corr_map.shape
@@ -252,3 +252,164 @@ def vis_corr(corr_map, sat, bev, gt_point, pred_point, save_path=None, alpha=0.6
     else:
         plt.show()
     plt.close(fig)
+
+
+def vis_two_sat(corr_map1, corr_map2, sat, bev, gt_point, pred_point1, pred_point2, save_path=None, alpha=0.6, temp=1):
+    # 处理相关性图（corr_map）
+    if corr_map1.min() >= 0:
+        corr_map1 = -(corr_map1 - 2) / 2
+
+    if corr_map2.min() >= 0:
+        corr_map2 = -(corr_map2 - 2) / 2
+
+    h, w = corr_map1.shape
+    corr_map1_flat = corr_map1.view(-1)  # 展平成向量，形状为 (h*w,)
+    corr_map2_flat = corr_map2.view(-1)  # 展平成向量，形状为 (h*w,)
+    max_corr1, _ = torch.max(corr_map1_flat, dim=0)
+    max_corr2, _ = torch.max(corr_map2_flat, dim=0)
+
+    # 对展平的相关性矩阵进行 softmax
+    corr_map1_softmax = F.softmax(corr_map1_flat/temp, dim=0)  # 按所有元素求 softmax
+    corr_map2_softmax = F.softmax(corr_map2_flat / temp, dim=0)  # 按所有元素求 softmax
+
+    # 将 softmax 结果 reshape 回原来的 (h, w) 形状
+    corr_map1 = corr_map1_softmax.view(h, w)
+
+    overlay1 = map_corr_to_center_keep_sat(corr_map1, sat, alpha)
+
+    corr_map2 = corr_map2_softmax.view(h, w)
+
+    overlay2 = map_corr_to_center_keep_sat(corr_map2, sat, alpha)
+
+    # 创建画布
+    fig = plt.figure(figsize=(20, 8))  # 根据需要调整画布大小
+
+    # 使用 gridspec 定义布局
+    gs = gridspec.GridSpec(1, 3, width_ratios=[1, 1, 640 / 320])
+
+    # 第一个子图：卫星图像和概率图叠加
+    ax1 = fig.add_subplot(gs[0])
+    ax1.imshow(overlay1)  # Matplotlib 直接支持 RGB 图像
+    if gt_point is not None:
+        ax1.plot(gt_point[0].cpu().numpy(), gt_point[1].cpu().numpy(), marker='^', color='blue', markersize=12,
+                 label='GT')
+        ax1.legend(loc='upper right')
+    if pred_point1 is not None:
+        ax1.plot(pred_point1[0].cpu().numpy(), pred_point1[1].cpu().numpy(), marker='*', color='green', markersize=12,
+                 label=f"pred_before{max_corr1:.4f}")
+        ax1.legend(loc='upper right')
+    if pred_point2 is not None:
+        ax1.plot(pred_point2[0].cpu().numpy(), pred_point2[1].cpu().numpy(), marker='*', color='yellow', markersize=12,
+                 label=f"pred_after{max_corr2:.4f}")
+        ax1.legend(loc='upper right')
+    ax1.axis('on')
+    ax1.set_title(f"before distillation")
+
+    ax2 = fig.add_subplot(gs[1])
+    ax2.imshow(overlay2)  # 绘制卫星图像
+    if gt_point is not None:
+        ax2.plot(gt_point[0].cpu().numpy(), gt_point[1].cpu().numpy(), marker='^', color='blue', markersize=12,
+                 label='GT')
+        ax2.legend(loc='upper right')
+    if pred_point2 is not None:
+        ax2.plot(pred_point2[0].cpu().numpy(), pred_point2[1].cpu().numpy(), marker='*', color='yellow', markersize=12,
+                 label='pred')
+        ax2.legend(loc='upper right')
+    ax2.axis('on')
+    ax2.set_title("after distillation")
+
+    # 第二个子图：BEV图像（彩色 RGB）
+    ax3 = fig.add_subplot(gs[2])
+    _, h, w = bev.shape
+    if h == w:
+        bev = bev.permute(1, 2, 0)
+    bev_img_rgb = bev.detach().cpu().numpy().astype(np.uint8)  # BEV 转换为 RGB
+    ax3.imshow(bev_img_rgb)
+    ax3.axis('on')
+    ax3.set_title("BEV Image")
+
+    # 调整布局
+    plt.tight_layout()
+
+    # 保存图像
+    if save_path is not None:
+        save_visualization(fig, save_path)
+    else:
+        plt.show()
+    plt.close(fig)
+
+
+def visualize_distributions(distance_t, distance_s, output_dir, bins=None):
+    """
+    可视化两个数组的累计统计、区间统计（以百分比显示），以及它们差值的区间统计（以百分比显示），并将图片保存到本地。
+    """
+    # 创建目标文件夹（如果不存在）
+    os.makedirs(output_dir, exist_ok=True)
+    if bins is None:
+        bins = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    # 计算距离
+    # distance_t = np.sqrt((pred_us_t - gt_us) ** 2 + (pred_vs_t - gt_vs) ** 2)  # [N]
+    # distance_s = np.sqrt((pred_us_s - gt_us) ** 2 + (pred_vs_s - gt_vs) ** 2)  # [N]
+    distance_diff = distance_t - distance_s  # 差值
+    distance_diff = distance_diff[distance_s < distance_t]
+
+    # 累计统计
+    cumulative_edges = bins[1:]
+    cumulative_counts_t = [np.sum(distance_t <= edge) for edge in cumulative_edges]
+    cumulative_counts_s = [np.sum(distance_s <= edge) for edge in cumulative_edges]
+
+    # 区间统计
+    counts_t, _ = np.histogram(distance_t, bins=bins)
+    counts_s, _ = np.histogram(distance_s, bins=bins)
+    counts_diff, _ = np.histogram(distance_diff, bins=bins)
+
+    # 计算总数
+    total_count_t = len(distance_t)
+    total_count_s = len(distance_s)
+    total_count_diff = len(distance_diff)
+
+    # 计算百分比
+    percentages_t = counts_t / total_count_t * 100
+    percentages_s = counts_s / total_count_s * 100
+    percentages_diff = counts_diff / total_count_diff * 100
+
+    # 绘制累计统计图
+    plt.figure(figsize=(8, 6))
+    plt.plot(cumulative_edges, cumulative_counts_t, label='Cumulative before', marker='o')
+    plt.plot(cumulative_edges, cumulative_counts_s, label='Cumulative after', marker='o')
+    plt.xlabel('Distance Threshold')
+    plt.ylabel('Cumulative Count')
+    plt.title('Cumulative Statistics')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f'{output_dir}/cumulative_statistics.png', dpi=300, bbox_inches='tight')
+    # plt.show()
+    plt.close()
+
+    # 绘制区间统计图（百分比）
+    plt.figure(figsize=(8, 6))
+    plt.bar(bins[:-1], percentages_t, width=np.diff(bins), align='edge', alpha=0.7, label='Range before', edgecolor='black')
+    plt.bar(bins[:-1], percentages_s, width=np.diff(bins), align='edge', alpha=0.7, label='Range after', edgecolor='black', color='orange')
+    plt.xlabel('Distance Range')
+    plt.ylabel('Percentage (%)')
+    plt.title('Range Statistics (Percentage)')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f'{output_dir}/range_statistics.png', dpi=300, bbox_inches='tight')
+    # plt.show()
+    plt.close()
+
+    # 绘制差值区间统计图（百分比）
+    plt.figure(figsize=(8, 6))
+    plt.bar(bins[:-1], percentages_diff, width=np.diff(bins), align='edge', alpha=0.7, color='green', edgecolor='black', label='Difference Range')
+    plt.xlabel('Distance Difference Range')
+    plt.ylabel('Percentage (%)')
+    plt.title('Difference Range Statistics (Percentage) after better than before')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f'{output_dir}/difference_statistics.png', dpi=300, bbox_inches='tight')
+    # plt.show()
+    plt.close()
+
+    # print(f"Plots saved in {output_dir}")

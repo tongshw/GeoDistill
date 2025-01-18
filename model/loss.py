@@ -7,12 +7,64 @@ import torch.nn.functional as F
 import numpy as np
 
 
+def generate_gaussian_heatmap(corr_dict, levels, sigma=1.0):
+    """
+    生成一个以最大置信度点为中心的高斯分布 heatmap。
+
+    Parameters:
+    - heatmap (Tensor): 输入的热图，形状为 [B, H, W]
+    - sigma (float): 高斯分布的标准差，控制分布的宽度
+
+    Returns:
+    - gaussian_heatmap (Tensor): 生成的高斯分布 heatmap，形状与输入 heatmap 相同
+    """
+    result_dict = {}
+    for _, level in enumerate(levels):
+        corr = corr_dict[level]
+        corr = -(corr - 2) / 2
+        B, H, W = corr.shape
+
+        # 找到每个热图中的最大置信度点
+        max_values, max_indices = torch.max(corr.view(B, -1), dim=1)
+
+        # 计算最大置信度点的 (y, x) 坐标
+        max_y = max_indices // W
+        max_x = max_indices % W
+
+        # 创建一个新的 heatmap 以高斯分布的形式
+        gaussian_heatmap = torch.zeros_like(corr)
+
+        # 对每一个 batch，基于最大置信度点生成高斯分布
+        for b in range(B):
+            y, x = max_y[b].item(), max_x[b].item()
+
+            # 使用 2D 高斯函数来创建分布
+            Y, X = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
+            Y = Y.float().to(corr.device)
+            X = X.float().to(corr.device)
+
+            # 计算每个点到最大置信度点 (y, x) 的距离
+            distance = (Y - y) ** 2 + (X - x) ** 2
+
+            # 生成高斯分布
+            gaussian_map = torch.exp(-distance / (2 * sigma ** 2))
+
+            # gaussian_map = 2 - 2 * gaussian_map
+
+            # 将其赋值给对应的 batch
+            gaussian_heatmap[b] = gaussian_map
+
+        result_dict[level] = gaussian_heatmap
+
+    return result_dict
+
+
 def cross_entropy(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.09):
     ce_losses = []
     for _, level in enumerate(levels):
         pred = pred_dict[level]
         target = target_dict[level]
-        target = target.detach()
+        # target = target.detach()
         pred = -(pred - 2) / 2
         target = -(target - 2) / 2
 

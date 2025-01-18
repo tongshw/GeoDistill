@@ -18,6 +18,7 @@ class VIGOR(Dataset):
         # self.start_angle = args.start_angle
         self.fov_size = args.fov_size
         self.bev_size = args.bev_size
+        self.fov_decay = args.fov_decay
 
 
         label_root = 'splits__corrected'  # 'splits' splits__corrected
@@ -91,6 +92,10 @@ class VIGOR(Dataset):
 
     def __len__(self):
         return len(self.pano_list)
+
+    def update_fov(self):
+        self.fov_size -= self.fov_decay
+        print(f"fov update new fov size is: {self.fov_size}")
 
     def __getitem__(self, idx):
         patch_size = self.image_size
@@ -274,8 +279,10 @@ class DistanceBatchSampler:
 
 
 
-def fetch_dataloader(args, split='train'):
-    vigor = VIGOR(args, split)
+def fetch_dataloader(args, vigor=None,  split='train'):
+    if vigor is None:
+        vigor = VIGOR(args, split)
+
     print('Training with %d image pairs' % len(vigor))
 
 
@@ -295,6 +302,7 @@ def fetch_dataloader(args, split='train'):
 
         train_dataloader = DataLoader(training_set, batch_sampler=train_bs, num_workers=8)
         val_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=8)
+
 
         print("using {} images for training, {} images for validation.".format(len(training_set), len(val_set)))
         return train_dataloader, val_dataloader

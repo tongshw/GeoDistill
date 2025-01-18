@@ -34,7 +34,6 @@ class LocalizationNet(nn.Module):
         self.rotation_range = 0
         self.grd_height = -2
 
-
     def sat2grd_uv(self, rot, shift_u, shift_v, level, H, W, meter_per_pixel):
         '''
         rot.shape = [B]
@@ -61,24 +60,24 @@ class LocalizationNet(nn.Module):
         ii = ii.unsqueeze(dim=0).repeat(B, 1, 1)  # [B, S, S] v dimension
         jj = jj.unsqueeze(dim=0).repeat(B, 1, 1)  # [B, S, S] u dimension
 
-        radius = torch.sqrt((ii-(S/2-0.5 + shift_v.reshape(-1, 1, 1)))**2 + (jj-(S/2-0.5 + shift_u.reshape(-1, 1, 1)))**2)
+        radius = torch.sqrt((ii - (S / 2 - 0.5 + shift_v.reshape(-1, 1, 1))) ** 2 + (
+                    jj - (S / 2 - 0.5 + shift_u.reshape(-1, 1, 1))) ** 2)
 
-        theta = torch.atan2(ii - (S / 2 - 0.5 + shift_v.reshape(-1, 1, 1)), jj - (S / 2 - 0.5 + shift_u.reshape(-1, 1, 1)))
+        theta = torch.atan2(ii - (S / 2 - 0.5 + shift_v.reshape(-1, 1, 1)),
+                            jj - (S / 2 - 0.5 + shift_u.reshape(-1, 1, 1)))
         theta = (-np.pi / 2 + (theta) % (2 * np.pi)) % (2 * np.pi)
         theta = theta % (2 * np.pi)
 
         theta = theta / 2 / np.pi * W
 
         # meter_per_pixel = self.meter_per_pixel_dict[city] * 512 / S
-        meter_per_pixel = meter_per_pixel * np.power(2, 3-level)
+        meter_per_pixel = meter_per_pixel * np.power(2, 3 - level)
         phimin = torch.atan2(radius * meter_per_pixel[:, None, None], torch.tensor(self.grd_height))
         phimin = phimin / np.pi * H
 
         uv = torch.stack([theta, phimin], dim=-1)
 
         return uv
-
-
 
     def project_grd_to_map(self, grd_feature, grd_confidence, rot, shift_u, shift_v, level, meter_per_pixel):
         '''
@@ -94,8 +93,6 @@ class LocalizationNet(nn.Module):
         else:
             grd_c_trans = None
         return grd_f_trans, grd_c_trans, uv
-
-
 
     def forward_2grd(self, sat_img, pano1, ones1, pano2, ones2, meter_per_pixel):
 
@@ -119,7 +116,6 @@ class LocalizationNet(nn.Module):
         pano2_feat_dict, pano2_conf_dict = self.grd_VGG(pano2_img)
         feat1_zero = torch.sum(pano1_feat_dict[0] == 0).item()
         conf1_zero = torch.sum(pano1_conf_dict[0] == 0).item()
-
 
         g2s1_feat_dict = {}
         g2s1_conf_dict = {}
@@ -167,8 +163,6 @@ class LocalizationNet(nn.Module):
             # ones1 = cv2.resize(ones1, (w, h))
             # ones2 = cv2.resize(ones2, (w, h))
 
-
-
             grd1_feat_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
                 pano1_feat, pano1_conf, None, shift_u, shift_v, level, meter_per_pixel)
 
@@ -199,8 +193,6 @@ class LocalizationNet(nn.Module):
             g2s2_feat_dict[level] = g2s2_feat
             g2s2_conf_dict[level] = g2s2_conf
 
-
-
         return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask1_dict, mask2_dict
 
     def forward_1grd(self, sat_img, pano1, ones1, meter_per_pixel):
@@ -218,7 +210,6 @@ class LocalizationNet(nn.Module):
 
         sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
         pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
-
 
         g2s1_feat_dict = {}
         g2s1_conf_dict = {}
@@ -261,15 +252,11 @@ class LocalizationNet(nn.Module):
             grd1_feat_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
                 pano1_feat, pano1_conf, None, shift_u, shift_v, level, meter_per_pixel)
 
-
             g2s1_feat = TF.center_crop(grd1_feat_proj, [crop_H, crop_W])
             g2s1_conf = TF.center_crop(grd1_conf_proj, [crop_H, crop_W])
 
-
             g2s1_feat_dict[level] = g2s1_feat
             g2s1_conf_dict[level] = g2s1_conf
-
-
 
         return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, mask1_dict
 
@@ -279,9 +266,8 @@ class LocalizationNet(nn.Module):
         else:
             return self.forward_1grd(sat_img, pano1, ones1, meter_per_pixel)
 
-
-
-    def calc_corr_for_train(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask_dict=None):
+    def calc_corr_for_train(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask_dict=None,
+                            batch_wise=False):
         corr_maps = {}
 
         for _, level in enumerate(self.levels):
@@ -304,51 +290,51 @@ class LocalizationNet(nn.Module):
                 bev_conf = bev_conf * mask
                 mask = mask.repeat(1, bev_feat.shape[1], 1, 1)
                 bev_feat = bev_feat * mask
-
             B = bev_feat.shape[0]
             A = sat_feat.shape[2]
 
-            signal = sat_feat.reshape(1, -1, A, A)  # [B, C, H, W]->[1, B*C, H, W]
-            kernel = bev_feat * bev_conf.pow(2)
-            corr = F.conv2d(signal, kernel, groups=B)[0]  # [B, H, W]
+            if batch_wise:
+                signal = sat_feat.repeat(1, B, 1, 1)  # [B(M), BC(NC), H, W] [8, 2048, 64, 64]
+                kernel = bev_feat * bev_conf.pow(2)  # [8, 256, 25, 25]
+                corr = F.conv2d(signal, kernel, groups=B)  # [8, 8, 40, 40], B=8
 
-            # denominator
-            sat_feat_pow = (sat_feat).pow(2).transpose(0, 1)  # [B, C, H, W]->[C, B, H, W]
-            g2s_conf_pow = bev_conf.pow(2)
-            denominator_sat = F.conv2d(sat_feat_pow, g2s_conf_pow, groups=B).transpose(0, 1)  # [B, C, H, W]
-            denominator_sat = torch.sqrt(torch.sum(denominator_sat, dim=1))  # [B, H, W]
+                # denominator
+                denominator_sat = []
+                sat_feat_pow = (sat_feat).pow(2)
+                bev_conf_pow = bev_conf.pow(2)
+                for i in range(0, B):
+                    denom_sat = torch.sum(F.conv2d(sat_feat_pow[i, :, None, :, :], bev_conf_pow), dim=0)
+                    denominator_sat.append(denom_sat)
+                denominator_sat = torch.sqrt(torch.stack(denominator_sat, dim=0))  # [B (M), B (N), H, W]
 
-            denom_grd = torch.linalg.norm((bev_feat * bev_conf).reshape(B, -1), dim=-1)  # [B]
-            shape = denominator_sat.shape
-            denominator_grd = denom_grd[:, None, None].repeat(1, shape[1], shape[2])
+                denom_grd = torch.linalg.norm((bev_feat * bev_conf).reshape(B, -1), dim=-1)  # [B]
+                shape = denominator_sat.shape
+                denominator_grd = denom_grd[None, :, None, None].repeat(shape[0], 1, shape[2], shape[3])
 
-            denominator = denominator_sat * denominator_grd
+                denominator = denominator_sat * denominator_grd
 
-            # signal = sat_feat.repeat(1, B, 1, 1)  # [B(M), BC(NC), H, W] [8, 2048, 64, 64]
-            # kernel = bev_feat * bev_conf.pow(2)  # [8, 256, 25, 25]
-            # corr = F.conv2d(signal, kernel, groups=B)  # [8, 8, 40, 40], B=8
-            #
-            # # denominator
-            # denominator_sat = []
-            # sat_feat_pow = (sat_feat).pow(2)
-            # bev_conf_pow = bev_conf.pow(2)
-            # for i in range(0, B):
-            #     denom_sat = torch.sum(F.conv2d(sat_feat_pow[i, :, None, :, :], bev_conf_pow), dim=0)
-            #     denominator_sat.append(denom_sat)
-            # denominator_sat = torch.sqrt(torch.stack(denominator_sat, dim=0))  # [B (M), B (N), H, W]
-            #
-            # denom_grd = torch.linalg.norm((bev_feat * bev_conf).reshape(B, -1), dim=-1)  # [B]
-            # shape = denominator_sat.shape
-            # denominator_grd = denom_grd[None, :, None, None].repeat(shape[0], 1, shape[2], shape[3])
-            #
-            # denominator = denominator_sat * denominator_grd
-            #
-            # denominator = torch.maximum(denominator, torch.ones_like(denominator) * 1e-6)
+                denominator = torch.maximum(denominator, torch.ones_like(denominator) * 1e-6)
+            else:
+
+                signal = sat_feat.reshape(1, -1, A, A)  # [B, C, H, W]->[1, B*C, H, W]
+                kernel = bev_feat * bev_conf.pow(2)
+                corr = F.conv2d(signal, kernel, groups=B)[0]  # [B, H, W]
+
+                # denominator
+                sat_feat_pow = (sat_feat).pow(2).transpose(0, 1)  # [B, C, H, W]->[C, B, H, W]
+                g2s_conf_pow = bev_conf.pow(2)
+                denominator_sat = F.conv2d(sat_feat_pow, g2s_conf_pow, groups=B).transpose(0, 1)  # [B, C, H, W]
+                denominator_sat = torch.sqrt(torch.sum(denominator_sat, dim=1))  # [B, H, W]
+
+                denom_grd = torch.linalg.norm((bev_feat * bev_conf).reshape(B, -1), dim=-1)  # [B]
+                shape = denominator_sat.shape
+                denominator_grd = denom_grd[:, None, None].repeat(1, shape[1], shape[2])
+
+                denominator = denominator_sat * denominator_grd
 
             corr = 2 - 2 * corr / denominator  # [B, B, H, W]
 
             corr_maps[level] = corr
-
 
         return corr_maps
 

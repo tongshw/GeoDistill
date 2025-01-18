@@ -18,9 +18,11 @@
     "ori_noise": 45,
     "orien": true,
 
-    "restore_ckpt": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
-    "model": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
+    "restore_ckpt": null,
+    "model": "/data/test/code/multi-local/distillation_model/teacher/cross-fov240-1mode-t1s1-ema0.9-sigma4_20250113_215742.pth",
     "save_path": "distillation_model",
+    "teacher": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
+    "student": "/data/test/code/multi-local/distillation_model/teacher/cross-fov240-1mode-t1s1-ema0.9-sigma4_20250113_215742.pth",
 
     "wdecay": 0.0005,
     "epsilon": 1e-7,
@@ -29,12 +31,15 @@
     "student_temp": 0.06,
     "teacher_temp": 0.06,
     "ema": 0.9,
+    "sigma": 4,
+    "self_distillation_w": 1,
 
 
     "image_size": 512,
     "sat_size": 640,
     "zoom": 20,
-    "fov_size": 210,
+    "fov_size": 240,
+    "fov_decay": 0,
     "bev_size": 300,
     "grid_size": 8,
 

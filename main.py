@@ -53,8 +53,9 @@ def train_epoch_distillation(args, teacher, student, train_loader, criterion, op
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano = [
-            x.to(device) for x in data_blob]
+        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+            x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
+        city = data_blob[-1]
 
 
         # 清除梯度
@@ -72,7 +73,7 @@ def train_epoch_distillation(args, teacher, student, train_loader, criterion, op
 
         teacher_corr = teacher.calc_corr_for_train(t_sat_feat_dict, t_sat_conf_dict, t_g2s_feat_dict, t_g2s_conf_dict,
                                                    None)
-        teacher_corr = generate_gaussian_heatmap(teacher_corr, args.levels, args.sigma)
+        # teacher_corr = generate_gaussian_heatmap(teacher_corr, args.levels, args.sigma)
         loss = cross_entropy(student_corr, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
 
         # 计算损失
@@ -146,8 +147,9 @@ def train_epoch_self_distillation(args, model, train_loader, criterion, optimize
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano = [
-            x.to(device) for x in data_blob]
+        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+            x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
+        city = data_blob[-1]
 
 
         # 清除梯度
@@ -186,7 +188,10 @@ def train_epoch_self_distillation(args, model, train_loader, criterion, optimize
         # loss = corr_loss + args.GPS_error_coe * GPS_loss
         # loss = args.corr_weight * (corr_loss1 + corr_loss2) + args.consitency_weight * consistency_loss
 
-        loss = corr_loss1 + args.self_distillation_w * ce_loss
+        if epoch >= args.start_epoch:
+            loss = corr_loss1 + args.self_distillation_w * ce_loss
+        else:
+            loss = corr_loss1
 
         # 反向传播
         loss.backward()
@@ -243,8 +248,9 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device, epoch):
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano = [
-            x.to(device) for x in data_blob]
+        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+            x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
+        city = data_blob[-1]
 
 
         # 清除梯度
@@ -336,8 +342,9 @@ def validate(args, model, val_loader, criterion, device, epoch=-1, vis=False, na
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
-            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano = [
-                x.to(device) for x in data_blob]
+            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+                x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
+            city = data_blob[-1]
 
             # 前向传播
             sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask1_dict = model(sat, resized_pano, None,
@@ -441,8 +448,9 @@ def validate_distillation(args, teacher, student, val_loader, criterion, device,
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
-            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano = [
-                x.to(device) for x in data_blob]
+            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+                x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
+            city = data_blob[-1]
 
             # 前向传播
             sat_feat_dict_t, sat_conf_dict_t, bev_feat_dict_t, bev_conf_dict_t, mask1_dict = teacher(sat, resized_pano, None,
@@ -629,8 +637,9 @@ def test_(args, model, val_loader, criterion, device, epoch=-1, vis=False, name=
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
-            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano = [
-                x.to(device) for x in data_blob]
+            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+                x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
+            city = data_blob[-1]
 
             # 前向传播
             sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, g2s2_feat_dict,\
@@ -730,7 +739,8 @@ def train_distillation(args):
     )
 
     # 学习率调度
-
+    t_best_val_mean_err = float('inf')
+    s_best_val_mean_err = float('inf')
 
     if args.restore_ckpt is not None:
         PATH = args.restore_ckpt  # 'checkpoints/best_checkpoint.pth'
@@ -740,7 +750,15 @@ def train_distillation(args):
             # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             # scheduler.load_state_dict(checkpoint['lr_schedule'])
             print_colored("Have load state_dict from: {}".format(args.restore_ckpt))
-
+    elif args.student_ckpt is not None:
+        PATH = args.student_ckpt  # 'checkpoints/best_checkpoint.pth'
+        if os.path.isfile(PATH):
+            checkpoint = torch.load(PATH)
+            s_best_val_mean_err = checkpoint['loss']
+            student.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            # scheduler.load_state_dict(checkpoint['lr_schedule'])
+            print_colored("Have load state_dict from: {}".format(args.restore_ckpt))
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
@@ -749,14 +767,21 @@ def train_distillation(args):
     )
 
     teacher = copy.deepcopy(student)
+    if args.teacher_ckpt is not None:
+        PATH = args.teacher_ckpt
+        if os.path.isfile(PATH):
+            checkpoint = torch.load(PATH)
+            t_best_val_mean_err = checkpoint['loss']
+            teacher.load_state_dict(checkpoint['model_state_dict'])
+            # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            # scheduler.load_state_dict(checkpoint['lr_schedule'])
+            print_colored("Have load state_dict from: {}".format(args.restore_ckpt))
+
     for param in teacher.parameters():
         param.requires_grad = False
 
-
-
     # 训练循环
-    t_best_val_mean_err = float('inf')
-    s_best_val_mean_err = float('inf')
+
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch + 1}/{args.epochs}")
         vigor.update_fov()
@@ -956,11 +981,11 @@ if __name__ == '__main__':
     parser.add_argument('--start_step', type=int, default=0)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
-    parser.add_argument('--epochs', type=int, default=16)
+    parser.add_argument('--epochs', type=int, default=30)
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-fov360-240-w1", help="none")
+    parser.add_argument('--name', default="cross-randomfov180-240", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',
@@ -987,7 +1012,7 @@ if __name__ == '__main__':
         config['batch_size'] = args.batch_size
 
     if config['wandb']:
-        wandb.init(project="self-distillation", name=args.name, config=config)
+        wandb.init(project="g2s-distillation", name=args.name, config=config)
 
     # if not config['train']:
     #     config['fov_size'] = 360
@@ -1005,8 +1030,8 @@ if __name__ == '__main__':
     if config.dataset == 'vigor':
         print("Dataset is VIGOR!")
     if args.train:
-        # train_distillation(config)
-        train(config)
+        train_distillation(config)
+        # train(config)
     else:
         # pass
         test(config)

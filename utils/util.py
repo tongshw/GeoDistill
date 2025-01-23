@@ -291,7 +291,7 @@ def vis_two_sat(corr_map1, corr_map2, sat, bev, gt_point, pred_point1, pred_poin
     ax1 = fig.add_subplot(gs[0])
     ax1.imshow(overlay1)  # Matplotlib 直接支持 RGB 图像
     if gt_point is not None:
-        ax1.plot(gt_point[0].cpu().numpy(), gt_point[1].cpu().numpy(), marker='^', color='blue', markersize=12,
+        ax1.plot(gt_point[0].cpu().numpy(), gt_point[1].cpu().numpy(), marker='^', color='blue', markersize=6,
                  label='GT')
         ax1.legend(loc='upper right')
     if pred_point1 is not None:
@@ -308,7 +308,7 @@ def vis_two_sat(corr_map1, corr_map2, sat, bev, gt_point, pred_point1, pred_poin
     ax2 = fig.add_subplot(gs[1])
     ax2.imshow(overlay2)  # 绘制卫星图像
     if gt_point is not None:
-        ax2.plot(gt_point[0].cpu().numpy(), gt_point[1].cpu().numpy(), marker='^', color='blue', markersize=12,
+        ax2.plot(gt_point[0].cpu().numpy(), gt_point[1].cpu().numpy(), marker='^', color='blue', markersize=6,
                  label='GT')
         ax2.legend(loc='upper right')
     if pred_point2 is not None:

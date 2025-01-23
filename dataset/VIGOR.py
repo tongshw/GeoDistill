@@ -8,6 +8,7 @@ import cv2
 from geometry import get_BEV_tensor, get_BEV_projection
 import numpy as np
 
+
 class VIGOR(Dataset):
     def __init__(self, args, split='train', root='/data/dataset/VIGOR', same_area=True):
         # usr = os.getcwd().split('/')[2]
@@ -19,7 +20,7 @@ class VIGOR(Dataset):
         self.fov_size = args.fov_size
         self.bev_size = args.bev_size
         self.fov_decay = args.fov_decay
-
+        self.dynamic_fov = args.dynamic_fov
 
         label_root = 'splits__corrected'  # 'splits' splits__corrected
         if same_area:
@@ -70,7 +71,7 @@ class VIGOR(Dataset):
         from sklearn.utils import shuffle
         for rand_state in range(20):
             self.pano_list, self.pano_label, self.sat_delta = shuffle(self.pano_list, self.pano_label, self.sat_delta,
-                                                            random_state=rand_state)
+                                                                      random_state=rand_state)
 
         self.meter_per_pixel_dict = {'NewYork': 0.113248 * 640 / 512,
                                      'Seattle': 0.100817 * 640 / 512,
@@ -112,7 +113,6 @@ class VIGOR(Dataset):
         # =================== read ground map ===================================
         pano = cv2.imread(pano_path, 1)[:, :, ::-1]
 
-
         resized_pano = cv2.resize(pano, (640, 320))
         h, w, c = resized_pano.shape
 
@@ -133,12 +133,14 @@ class VIGOR(Dataset):
         # w_start2 = int(np.floor(w / 360 * start_angle2))
         # w_end2 = int(np.floor(w / 360 * (start_angle2 + 360 - self.fov_size)))
 
+        if self.dynamic_fov:
+            masked_fov = 360 - np.random.randint(180, 240)
+        else:
+            masked_fov = 360 - self.fov_size
 
-        start_angle1 = np.random.randint(0, 360 - self.masked_fov)
+        start_angle1 = np.random.randint(0, 360 - masked_fov)
         w_start1 = int(np.round(w / 360 * start_angle1))
-        w_end1 = int(np.round(w / 360 * (start_angle1 + self.masked_fov)))
-
-
+        w_end1 = int(np.round(w / 360 * (start_angle1 + masked_fov)))
 
         # 创建两个 mask，并应用到原图像上
         mask1 = np.zeros_like(resized_pano)
@@ -185,7 +187,6 @@ class VIGOR(Dataset):
         # sat_delta[1] = sat_delta_init[0] + patch_size / 2.0
         # sat_delta[0] = patch_size / 2.0 - sat_delta_init[1]  # from [y, x] To [x, y], so fit the coord of model out
 
-
         sat_delta_init2 = torch.from_numpy(self.sat_delta[idx][select_] * patch_size / 640.0).float()
 
         gt_shift_y = sat_delta_init2[0] / 512 * 4  # -L/4 ~ L/4  -1 ~ 1
@@ -198,8 +199,6 @@ class VIGOR(Dataset):
         # plt.axis("on")  # 关闭坐标轴
         # plt.show()
 
-
-
         city = ""
         if 'NewYork' in pano_path:
             city = 'NewYork'
@@ -211,8 +210,9 @@ class VIGOR(Dataset):
             city = 'Chicago'
 
         # return img1, img2, pano_gps, sat_gps, torch.tensor(ori_angle), sat_delta
-        return bev, sat, pano_gps, sat_gps, torch.tensor(sat_delta, dtype=torch.float32), torch.tensor(self.meter_per_pixel_dict[city], dtype=torch.float32), \
-            pano1, ones1, pano2, ones2, resized_pano
+        return bev, sat, pano_gps, sat_gps, torch.tensor(sat_delta, dtype=torch.float32), torch.tensor(
+            self.meter_per_pixel_dict[city], dtype=torch.float32), \
+            pano1, ones1, pano2, ones2, resized_pano, city
 
 
 class DistanceBatchSampler:
@@ -278,13 +278,11 @@ class DistanceBatchSampler:
             return (len(self.sampler) + self.batch_size - 1) // self.batch_size
 
 
-
-def fetch_dataloader(args, vigor=None,  split='train'):
+def fetch_dataloader(args, vigor=None, split='train'):
     if vigor is None:
         vigor = VIGOR(args, split)
 
     print('Training with %d image pairs' % len(vigor))
-
 
     if split == 'train':
 
@@ -302,7 +300,6 @@ def fetch_dataloader(args, vigor=None,  split='train'):
 
         train_dataloader = DataLoader(training_set, batch_sampler=train_bs, num_workers=8)
         val_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=8)
-
 
         print("using {} images for training, {} images for validation.".format(len(training_set), len(val_set)))
         return train_dataloader, val_dataloader

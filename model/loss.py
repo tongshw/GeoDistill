@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 
 
-def generate_gaussian_heatmap(corr_dict, levels, sigma=1.0):
+def generate_gaussian_heatmap(corr_dict, levels, sigma=1.0, gt=None):
     """
     生成一个以最大置信度点为中心的高斯分布 heatmap。
 
@@ -27,9 +27,18 @@ def generate_gaussian_heatmap(corr_dict, levels, sigma=1.0):
         # 找到每个热图中的最大置信度点
         max_values, max_indices = torch.max(corr.view(B, -1), dim=1)
 
-        # 计算最大置信度点的 (y, x) 坐标
-        max_y = max_indices // W
-        max_x = max_indices % W
+        if gt is None:
+            max_y = max_indices // W
+            max_x = max_indices % W
+        else:
+            scale = 64
+            if level == 2:
+                scale = 256
+            gt_points = gt * scale / 4
+            crop_x, crop_y = (scale - W) / 2, (scale - H) / 2
+            gt_points[:, 0] = gt_points[:, 0] + scale/2 - crop_x
+            gt_points[:, 1] = gt_points[:, 1] + scale/2 - crop_y
+            max_y, max_x = gt_points[:, 1], gt_points[:, 0]
 
         # 创建一个新的 heatmap 以高斯分布的形式
         gaussian_heatmap = torch.zeros_like(corr)
@@ -57,6 +66,42 @@ def generate_gaussian_heatmap(corr_dict, levels, sigma=1.0):
         result_dict[level] = gaussian_heatmap
 
     return result_dict
+
+
+def adaptive_cross_entropy(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.09):
+    ce_losses = []
+    for _, level in enumerate(levels):
+        pred = pred_dict[level]
+        target = target_dict[level]
+        # target = target.detach()
+        pred = -(pred - 2) / 2
+        # target = -(target - 2) / 2
+
+        b, h, w = pred.shape
+        # pred = pred[torch.arange(b), torch.arange(b)]
+        # target = target[torch.arange(b), torch.arange(b)]
+
+        pred_map_flat = pred.view(b, -1)
+        target_map_flat = target.view(b, -1)
+
+        pred_map_softmax = F.softmax(pred_map_flat / s_temp, dim=1)
+        target_map_softmax = F.softmax(target_map_flat / t_temp, dim=1)
+        # sum_pred = torch.sum(pred_map_softmax, dim=1)
+        # max_pred = torch.max(pred_map_softmax, dim=1)[0]
+        # sum_target = torch.sum(target_map_softmax, dim=1)
+        # max_target = torch.max(target_map_softmax, dim=1)[0]
+        #
+        # bool_mask = target_map_softmax > 1e-2
+
+
+        # pred_map = pred_map_softmax.view(b, h, w)
+        # target_map = target_map_softmax.view(b, h, w)
+
+        loss = -torch.sum(target_map_softmax * torch.log(pred_map_softmax), dim=1)
+        loss = torch.sum(loss) / b
+        ce_losses.append(loss)
+    return torch.mean(torch.stack(ce_losses, dim=0).float())
+
 
 
 def cross_entropy(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.09):

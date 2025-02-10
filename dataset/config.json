@@ -18,13 +18,13 @@
     "ori_noise": 45,
     "orien": true,
 
-    "restore_ckpt": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
+    "restore_ckpt": "/data/test/code/multi-local/consistency_model/same-corrw100_20241223_185200.pth",
     "teacher_ckpt": null,
     "student_ckpt": null,
-    "model": "/data/test/code/multi-local/distillation_model/student/epoch12/same-randomfov180-240_20250120_095018.pth",
+    "model": "/data/test/code/multi-local/distillation_model/teacher/best/cross-randomfov180-240_20250120_094602.pth",
     "save_path": "distillation_model",
     "teacher": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
-    "student": "/data/test/code/multi-local/distillation_model/teacher/cross-fov240-1mode-t1s1-ema0.9-sigma4_20250113_215742.pth",
+    "student": "/data/test/code/multi-local/distillation_model/teacher/best/cross-randomfov180-240_20250120_094602.pth",
 
     "wdecay": 0.0005,
     "epsilon": 1e-7,
@@ -42,7 +42,7 @@
     "image_size": 512,
     "sat_size": 640,
     "zoom": 20,
-    "fov_size": 240,
+    "fov_size": 300,
     "fov_decay": 0,
     "bev_size": 300,
     "grid_size": 8,
@@ -57,7 +57,12 @@
     "SUM_FREQ": 100,
     "vis_freq": 100,
 
-    "visualize": false,
+    "visualize": true,
     "save_visualization": true,
-    "wandb": false
+    "wandb": true,
+
+    "mask_activation": false,
+    "mask_ratio": 0.3,
+
+    "adaptive_loss": false
 }

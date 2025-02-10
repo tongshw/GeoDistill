@@ -15,6 +15,8 @@ from torchvision import transforms
 from VGG import VGGUnet
 import torchvision.transforms.functional as TF
 
+from test_activation import generate_mask
+from test_vis_attention import visualize_attention_map
 from utils.util import grid_sample
 
 
@@ -61,7 +63,7 @@ class LocalizationNet(nn.Module):
         jj = jj.unsqueeze(dim=0).repeat(B, 1, 1)  # [B, S, S] u dimension
 
         radius = torch.sqrt((ii - (S / 2 - 0.5 + shift_v.reshape(-1, 1, 1))) ** 2 + (
-                    jj - (S / 2 - 0.5 + shift_u.reshape(-1, 1, 1))) ** 2)
+                jj - (S / 2 - 0.5 + shift_u.reshape(-1, 1, 1))) ** 2)
 
         theta = torch.atan2(ii - (S / 2 - 0.5 + shift_v.reshape(-1, 1, 1)),
                             jj - (S / 2 - 0.5 + shift_u.reshape(-1, 1, 1)))
@@ -193,9 +195,17 @@ class LocalizationNet(nn.Module):
             g2s2_feat_dict[level] = g2s2_feat
             g2s2_conf_dict[level] = g2s2_conf
 
-        return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask1_dict, mask2_dict
+        return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask1_dict, mask2_dict, \
+            pano1_conf_dict, pano2_conf_dict
 
     def forward_1grd(self, sat_img, pano1, ones1, meter_per_pixel):
+        B = sat_img.shape[0]
+        # shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
+        # shift_v = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
+        # grd1_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
+        #     pano1.permute(0, 3, 1, 2), pano1, None, shift_u, shift_v, 2, meter_per_pixel)
+        # plt.figure(figsize=(10, 5))
+        # plt.imshow(grd1_proj[0].permute(1, 2, 0).cpu().numpy().astype(np.uint8))
 
         sat_img = 2 * (sat_img / 255.0) - 1.0
         pano1_img = 2 * (pano1 / 255.0) - 1.0
@@ -210,6 +220,24 @@ class LocalizationNet(nn.Module):
 
         sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
         pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
+
+        # batch_size, channel, height, width = pano1_feat_dict[3].shape
+
+        # 计算每个位置的L2范数
+        # l2_norms_pano = torch.norm(pano1_feat_dict[3], p=2, dim=1, keepdim=True)
+        # l2_norms_sat = torch.norm(sat_feat_dict[3], p=2, dim=1, keepdim=True)
+        # mask_pano = generate_mask(pano1_feat_dict[3], 0.2)
+        #
+        # # 对L2范数进行归一化
+        # attention_map_pano = (l2_norms_pano - l2_norms_pano.min()) / (l2_norms_pano.max() - l2_norms_pano.min())
+        # attention_map_sat = (l2_norms_sat - l2_norms_sat.min()) / (l2_norms_sat.max() - l2_norms_sat.min())
+        # pano = (((pano1_img[0] + 1)/2 * 255) * mask_pano[0]).permute(1, 2, 0).cpu().numpy()
+        #
+        # visualize_attention_map(attention_map_pano[0].cpu().numpy(), attention_map_sat[0].cpu().numpy(),
+        #                         pano,
+        #                         ((sat_img[0] + 1)/2 * 255).permute(1, 2, 0).cpu().numpy())
+
+
 
         g2s1_feat_dict = {}
         g2s1_conf_dict = {}
@@ -258,7 +286,7 @@ class LocalizationNet(nn.Module):
             g2s1_feat_dict[level] = g2s1_feat
             g2s1_conf_dict[level] = g2s1_conf
 
-        return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, mask1_dict
+        return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, mask1_dict, pano1_conf_dict, pano1_feat_dict
 
     def forward(self, sat_img, pano1, ones1, pano2, ones2, meter_per_pixel):
         if pano2 is not None:

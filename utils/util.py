@@ -7,6 +7,7 @@ import torch
 from matplotlib import pyplot as plt, gridspec
 from matplotlib.colors import Normalize
 import torch.nn.functional as F
+from PIL import Image
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -168,7 +169,7 @@ def save_visualization(fig, save_path, dpi=300):
     fig.savefig(save_path, format="jpeg", dpi=300, bbox_inches='tight')  # 保存为高分辨率图像
     # print(f"Figure saved to: {save_path}")
 
-def map_corr_to_center_keep_sat(corr_map, sat_img, alpha=0.4):
+def map_corr_to_center_keep_sat(corr_map, sat_img, alpha=0):
     """
     将 155x155 的相关性图映射到 512x512 卫星图的中心区域，同时保留卫星图的外围区域。
     """
@@ -185,10 +186,20 @@ def map_corr_to_center_keep_sat(corr_map, sat_img, alpha=0.4):
     cmap = plt.cm.Reds  # 红色渐变
     colored_corr_map = cmap(corr_map_centered)[:, :, :3]  # 去掉 Alpha 通道
     colored_corr_map = (colored_corr_map * 255).astype(np.uint8)  # 转换为 RGB 图像
+    #
+    alpha1 = (corr_map_centered * 255).astype(np.uint8)  # 值域 [0,255]
+
+    # 合并 RGB 和 Alpha 通道为 RGBA
+    rgba_image = np.zeros((512, 512, 4), dtype=np.uint8)  # 初始化全透明画布
+    rgba_image[..., :3] = colored_corr_map  # 填充 RGB 颜色
+    rgba_image[..., 3] = alpha1  # 填充 Alpha 通道
+
+    # 保存为透明 PNG（注意边缘残留问题的处理）
+    Image.fromarray(rgba_image, 'RGBA').save('corr_map_adaptive_alpha.png')
 
     # Step 4: 使用遮罩仅叠加中心区域
     sat_img_rgb = sat_img.permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)  # 卫星图转为 RGB
-    mask = corr_map_centered > 0  # 创建遮罩，仅保留相关性图的有效区域
+    mask = corr_map_centered > corr_map_centered.min()  # 创建遮罩，仅保留相关性图的有效区域
     for c in range(3):  # 对 RGB 通道分别处理
         sat_img_rgb[:, :, c] = np.where(mask,
                                         cv2.addWeighted(sat_img_rgb[:, :, c], 1 - alpha, colored_corr_map[:, :, c],
@@ -223,11 +234,11 @@ def vis_corr(corr_map, sat, bev, gt_point, pred_point, save_path=None, alpha=0.6
     ax1 = fig.add_subplot(gs[0])
     ax1.imshow(overlay)  # Matplotlib 直接支持 RGB 图像
     if gt_point is not None:
-        ax1.plot(gt_point[0].cpu().numpy(), gt_point[1].cpu().numpy(), marker='o', color='blue', markersize=8,
+        ax1.plot(gt_point[0].cpu().numpy(), gt_point[1].cpu().numpy(), marker='o', color='green', markersize=8,
                  label='GT')
         ax1.legend(loc='upper right')
     if pred_point is not None:
-        ax1.plot(pred_point[0].cpu().numpy(), pred_point[1].cpu().numpy(), marker='x', color='green', markersize=8,
+        ax1.plot(pred_point[0].cpu().numpy(), pred_point[1].cpu().numpy(), marker='d', color='blue', markersize=8,
                  label='pred')
         ax1.legend(loc='upper right')
     ax1.axis('on')

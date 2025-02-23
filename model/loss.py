@@ -68,7 +68,7 @@ def generate_gaussian_heatmap(corr_dict, levels, sigma=1.0, gt=None):
     return result_dict
 
 
-def adaptive_cross_entropy(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.09):
+def adaptive_cross_entropy(pred_dict, target_dict, levels, weight=None, s_temp=0.2, t_temp=0.09):
     ce_losses = []
     for _, level in enumerate(levels):
         pred = pred_dict[level]
@@ -98,10 +98,206 @@ def adaptive_cross_entropy(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.
         # target_map = target_map_softmax.view(b, h, w)
 
         loss = -torch.sum(target_map_softmax * torch.log(pred_map_softmax), dim=1)
-        loss = torch.sum(loss) / b
+        # if weight is not None:
+        #     loss = loss * weight
+        # loss = torch.sum(loss) / b
+        ce_losses.append(loss)
+    return torch.stack(ce_losses, dim=0).float()
+
+
+def cross_entropy_fully_supervised(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.09):
+    ce_losses = []
+    for _, level in enumerate(levels):
+        pred = pred_dict[level]
+        target = target_dict[level]
+        pred = -(pred - 2) / 2
+
+        b, h, w = pred.shape
+        # pred = pred[torch.arange(b), torch.arange(b)]
+        # target = target[torch.arange(b), torch.arange(b)]
+
+        pred_map_flat = pred.view(b, -1)
+        target_map_flat = target.view(b, -1)
+
+        pred_map_softmax = F.softmax(pred_map_flat / s_temp, dim=1)
+        target_map_softmax = F.softmax(target_map_flat / t_temp, dim=1)
+        # sum_pred = torch.sum(pred_map_softmax, dim=1)
+        # max_pred = torch.max(pred_map_softmax, dim=1)[0]
+        # sum_target = torch.sum(target_map_softmax, dim=1)
+        # max_target = torch.max(target_map_softmax, dim=1)[0]
+        #
+        # bool_mask = target_map_softmax > 1e-2
+
+
+        pred_map = pred_map_softmax.view(b, h, w)
+        target_map = target_map_softmax.view(b, h, w)
+
+        loss = -torch.sum(target_map * torch.log(pred_map)) / b
         ce_losses.append(loss)
     return torch.mean(torch.stack(ce_losses, dim=0).float())
 
+
+def sinkhorn_iteration(cost_matrix, p, q, eps=0.01, n_iters=50):
+    """
+    Sinkhorn迭代算法计算最优传输
+    cost_matrix: [H*W, H*W] 位置间距离矩阵
+    p: [B, H*W] 预测分布
+    q: [B, H*W] 目标分布
+    eps: 熵正则化系数
+    """
+    # 初始化传输矩阵
+    K = torch.exp(-cost_matrix / eps)
+    u = torch.ones_like(p)
+    v = torch.ones_like(q)
+
+    # 迭代归一化
+    for _ in range(n_iters):
+        u = p / (torch.bmm(K.unsqueeze(0).expand(p.size(0), -1, -1), v.unsqueeze(-1)).squeeze(-1) + 1e-8)
+        v = q / (torch.bmm(K.unsqueeze(0).expand(p.size(0), -1, -1).transpose(1, 2), u.unsqueeze(-1)).squeeze(
+            -1) + 1e-8)
+
+    # 计算传输计划
+    T = u.unsqueeze(-1) * K * v.unsqueeze(1)
+
+    # 计算Wasserstein距离
+    return torch.sum(T * cost_matrix, dim=(1, 2))
+
+
+def wasserstein_distance(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.09, eps=0.01, n_iters=50):
+    wd_losses = []
+    for level in levels:
+        pred = pred_dict[level]
+        target = target_dict[level]
+
+        # 保持原有预处理
+        pred = -(pred - 2) / 2
+        target = -(target - 2) / 2
+
+        b, h, w = pred.shape
+
+        # 生成坐标网格（计算位置间距离）
+        grid_y, grid_x = torch.meshgrid(torch.arange(h), torch.arange(w), indexing='ij')
+        coords = torch.stack([grid_x, grid_y], dim=-1).float().view(-1, 2)  # [H*W, 2]
+        cost_matrix = torch.cdist(coords, coords, p=2)  # [H*W, H*W]
+        cost_matrix = cost_matrix.to(pred.device)
+
+        # 展平并应用softmax
+        pred_flat = pred.view(b, -1)
+        target_flat = target.view(b, -1)
+        pred_softmax = F.softmax(pred_flat / s_temp, dim=1)
+        target_softmax = F.softmax(target_flat / t_temp, dim=1)
+
+        # 计算Wasserstein距离
+        wd = sinkhorn_iteration(cost_matrix, pred_softmax, target_softmax, eps, n_iters)
+        wd_losses.append(torch.mean(wd))
+
+    return torch.mean(torch.stack(wd_losses))
+
+
+def sparse_sinkhorn(pred, target, cost_matrix, eps=0.1, n_iters=20):
+    """
+    基于稀疏邻域优化的Sinkhorn算法
+    pred: [B, H*W] 预测概率分布
+    target: [B, H*W] 目标概率分布
+    cost_matrix: [H*W, H*W] 稀疏距离矩阵
+    """
+    K = torch.exp(-cost_matrix / eps)
+    u = torch.ones_like(pred)
+    v = torch.ones_like(target)
+
+    # 使用矩阵乘法优化内存
+    for _ in range(n_iters):
+        Kv = torch.matmul(K, v.unsqueeze(-1)).squeeze(-1)
+        u = pred / (Kv + 1e-8)
+        KTu = torch.matmul(K.T, u.unsqueeze(-1)).squeeze(-1)
+        v = target / (KTu + 1e-8)
+
+    T = u.unsqueeze(-1) * K * v.unsqueeze(1)
+    return torch.sum(T * cost_matrix, dim=(1, 2))
+
+
+def sparse_wasserstein(pred_dict, target_dict, levels,
+                       s_temp=0.2, t_temp=0.09,
+                       eps=0.4, n_iters=20,
+                       neighbor_radius=1):
+    losses = []
+
+    # 预先生成各层级的cost matrix
+    cost_cache = {}
+    for level in levels:
+        pred = pred_dict[level]
+        b, h, w = pred.shape
+
+        if (h, w) not in cost_cache:
+            # 确保坐标生成在正确的设备上（核心修复）
+            device = pred.device  # 获取当前张量的设备
+
+            # 生成稀疏坐标网格（显式指定设备）
+            grid_y, grid_x = torch.meshgrid(
+                torch.arange(h, device=device),  # 添加设备参数
+                torch.arange(w, device=device),  # 添加设备参数
+                indexing='ij'
+            )
+            coords = torch.stack([grid_x, grid_y], -1).float().view(-1, 2)
+
+            # 计算稀疏邻接矩阵
+            dist = torch.cdist(coords, coords, p=1)  # 现在dist在GPU上
+
+            # 创建邻域掩码（所有计算都在GPU）
+            mask = (dist <= neighbor_radius) & (dist > 0)
+
+            # 生成稀疏cost matrix（显式指定设备）
+            sparse_cost = torch.where(
+                mask,
+                dist,
+                torch.tensor(1e5, device=device)  # 确保该张量在正确设备
+            )
+            cost_cache[(h, w)] = sparse_cost
+
+        # 获取当前层级的cost matrix（已在GPU）
+        cost_matrix = cost_cache[(h, w)]
+
+        # 处理当前层数据（保持设备一致）
+        pred = -(pred_dict[level] - 2) / 2
+        target = -(target_dict[level] - 2) / 2
+
+        # 计算概率分布
+        pred_prob = F.softmax(pred.view(b, -1) / s_temp, dim=1)
+        target_prob = F.softmax(target.view(b, -1) / t_temp, dim=1)
+
+        # 计算Wasserstein距离
+        loss = sparse_sinkhorn(pred_prob, target_prob, cost_matrix, eps, n_iters)
+        losses.append(torch.mean(loss))
+
+    return torch.mean(torch.stack(losses))
+
+def kl_divergence(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.09):
+    kl_losses = []
+    for _, level in enumerate(levels):
+        pred = pred_dict[level]
+        target = target_dict[level]
+
+        # 保持原有的预处理
+        pred = -(pred - 2) / 2
+        target = -(target - 2) / 2
+
+        b, h, w = pred.shape
+
+        # 展平特征图
+        pred_flat = pred.view(b, -1)  # [b, h*w]
+        target_flat = target.view(b, -1)  # [b, h*w]
+
+        # 计算带温度参数的softmax
+        pred_softmax = F.softmax(pred_flat / s_temp, dim=1)
+        target_softmax = F.softmax(target_flat / t_temp, dim=1)
+
+        # 计算KL散度（使用PyTorch内置函数）
+        log_pred = torch.log(pred_softmax)
+        kl_loss = F.kl_div(log_pred, target_softmax, reduction='batchmean')
+
+        kl_losses.append(kl_loss)
+
+    return torch.mean(torch.stack(kl_losses))
 
 
 def cross_entropy(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.09):
@@ -136,6 +332,7 @@ def cross_entropy(pred_dict, target_dict, levels, s_temp=0.2, t_temp=0.09):
         loss = -torch.sum(target_map * torch.log(pred_map)) / b
         ce_losses.append(loss)
     return torch.mean(torch.stack(ce_losses, dim=0).float())
+
 
 
 def soft_argmax(corr_map):

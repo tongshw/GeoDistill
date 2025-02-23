@@ -1,3 +1,4 @@
+import copy
 import time
 
 import cv2
@@ -115,7 +116,8 @@ class LocalizationNet(nn.Module):
 
         sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
         pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
-        pano2_feat_dict, pano2_conf_dict = self.grd_VGG(pano2_img)
+        # pano2_feat_dict, pano2_conf_dict = self.grd_VGG(pano2_img)
+
         feat1_zero = torch.sum(pano1_feat_dict[0] == 0).item()
         conf1_zero = torch.sum(pano1_conf_dict[0] == 0).item()
 
@@ -139,8 +141,8 @@ class LocalizationNet(nn.Module):
             sat_feat = sat_feat_dict[level]
             pano1_feat = pano1_feat_dict[level]
             pano1_conf = pano1_conf_dict[level]
-            pano2_feat = pano2_feat_dict[level]
-            pano2_conf = pano2_conf_dict[level]
+            pano2_feat = pano1_feat_dict[level].clone()
+            pano2_conf = pano1_conf_dict[level].clone()
 
             B, c, h, w = pano2_feat.shape
 
@@ -196,7 +198,7 @@ class LocalizationNet(nn.Module):
             g2s2_conf_dict[level] = g2s2_conf
 
         return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask1_dict, mask2_dict, \
-            pano1_conf_dict, pano2_conf_dict
+            pano1_conf_dict, pano1_conf_dict
 
     def forward_1grd(self, sat_img, pano1, ones1, meter_per_pixel):
         B = sat_img.shape[0]
@@ -205,7 +207,8 @@ class LocalizationNet(nn.Module):
         # grd1_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
         #     pano1.permute(0, 3, 1, 2), pano1, None, shift_u, shift_v, 2, meter_per_pixel)
         # plt.figure(figsize=(10, 5))
-        # plt.imshow(grd1_proj[0].permute(1, 2, 0).cpu().numpy().astype(np.uint8))
+        # plt.imshow(grd1_proj[1].permute(1, 2, 0).cpu().detach().numpy().astype(np.uint8))
+        # plt.show()
 
         sat_img = 2 * (sat_img / 255.0) - 1.0
         pano1_img = 2 * (pano1 / 255.0) - 1.0

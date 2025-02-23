@@ -21,6 +21,8 @@ class VIGOR(Dataset):
         self.bev_size = args.bev_size
         self.fov_decay = args.fov_decay
         self.dynamic_fov = args.dynamic_fov
+        self.dynamic_low = args.dynamic_low
+        self.dynamic_high = args.dynamic_high
 
         label_root = 'splits__corrected'  # 'splits' splits__corrected
         if same_area:
@@ -134,7 +136,7 @@ class VIGOR(Dataset):
         # w_end2 = int(np.floor(w / 360 * (start_angle2 + 360 - self.fov_size)))
 
         if self.dynamic_fov:
-            masked_fov = 360 - np.random.randint(180, 240)
+            masked_fov = 360 - np.random.randint(self.dynamic_low, self.dynamic_high)
         else:
             masked_fov = 360 - self.fov_size
 
@@ -212,7 +214,7 @@ class VIGOR(Dataset):
         # return img1, img2, pano_gps, sat_gps, torch.tensor(ori_angle), sat_delta
         return bev, sat, pano_gps, sat_gps, torch.tensor(sat_delta, dtype=torch.float32), torch.tensor(
             self.meter_per_pixel_dict[city], dtype=torch.float32), \
-            pano1, ones1, pano2, ones2, resized_pano, city
+            pano1, ones1, pano2, ones2, resized_pano, city, torch.tensor(masked_fov, dtype=torch.float32)
 
 
 class DistanceBatchSampler:

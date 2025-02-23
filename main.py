@@ -7,10 +7,10 @@ import cv2
 import numpy as np
 from matplotlib.colors import Normalize
 
-from test_activation import generate_mask
+from test_activation import generate_mask, generate_mask_avg
 from test_vis_attention import visualize_attention_map
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 # os.environ['WANDB_MODE'] = "offline"
 import time
 
@@ -25,7 +25,8 @@ from tqdm import tqdm
 
 from model.Network import LocalizationNet
 from model.loss import Weakly_supervised_loss_w_GPS_error, consistency_constraint_soft_L1, \
-    consistency_constraint_KL_divergency, cross_entropy, generate_gaussian_heatmap, adaptive_cross_entropy
+    consistency_constraint_KL_divergency, cross_entropy, generate_gaussian_heatmap, adaptive_cross_entropy, \
+    cross_entropy_fully_supervised, kl_divergence, wasserstein_distance, sparse_wasserstein
 from utils.util import setup_seed, print_colored, count_parameters, visualization, TextColors, vis_corr, vis_two_sat, \
     visualize_distributions
 from dataset.VIGOR import fetch_dataloader, VIGOR
@@ -56,7 +57,7 @@ def train_epoch_distillation(args, teacher, student, train_loader, criterion, op
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
 
@@ -70,31 +71,49 @@ def train_epoch_distillation(args, teacher, student, train_loader, criterion, op
             t_g2s_conf_dict, t_mask1_dict, t_pano1_conf_dict, t_pano1_feat_dict = teacher(sat, resized_pano, None, None, None,
                                                                            meter_per_pixel)
         if args.mask_activation:
-            mask_pano = generate_mask(t_pano1_feat_dict[3], args.mask_ratio)
+            mask_pano = generate_mask_avg(t_pano1_feat_dict[3], args.mask_ratio)
             mask_pano = mask_pano.permute(0, 2, 3, 1).repeat(1, 1, 1, 3)
             pano = resized_pano * mask_pano
         else:
             mask_pano = ones1
             pano = pano1
 
-        # s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, \
-        #     s_g2s_conf_dict, s_mask1_dict, s_pano1_conf_dict, s_pano1_feat_dict = student(sat, pano, mask_pano, None, None, meter_per_pixel)
-        #
-        # student_corr = student.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, s_g2s_conf_dict, s_mask1_dict)
+        s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, \
+            s_g2s_conf_dict, s_mask1_dict, s_pano1_conf_dict, s_pano1_feat_dict = student(sat, pano, mask_pano, None, None, meter_per_pixel)
 
-        s_sat_feat_dict, s_sat_conf_dict, s_g2s1_feat_dict, s_g2s1_conf_dict, s_g2s2_feat_dict, s_g2s2_conf_dict, s_mask1_dict, \
-            s_mask2_dict, s_pano1_conf_dict, s_pano2_conf_dict = student(sat, pano, mask_pano, pano2, ones2, meter_per_pixel)
-
-        student_corr1 = student.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict, s_g2s1_feat_dict, s_g2s1_conf_dict, s_mask1_dict)
-        student_corr2 = student.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict, s_g2s2_feat_dict, s_g2s2_conf_dict, s_mask2_dict)
-
+        student_corr = student.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, s_g2s_conf_dict, s_mask1_dict)
         teacher_corr = teacher.calc_corr_for_train(t_sat_feat_dict, t_sat_conf_dict, t_g2s_feat_dict, t_g2s_conf_dict,
                                                    None)
 
-        loss1 = cross_entropy(student_corr1, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
-        loss2 = cross_entropy(student_corr2, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
 
-        loss = loss1 + loss2
+        # s_sat_feat_dict, s_sat_conf_dict, s_g2s1_feat_dict, s_g2s1_conf_dict, s_g2s2_feat_dict, s_g2s2_conf_dict, s_mask1_dict, \
+        #     s_mask2_dict, s_pano1_conf_dict, s_pano2_conf_dict = student(sat, resized_pano, mask_pano, pano2, ones2, meter_per_pixel)
+        #
+        # student_corr1 = student.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict, s_g2s1_feat_dict, s_g2s1_conf_dict, s_mask1_dict)
+        # student_corr2 = student.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict, s_g2s1_feat_dict, s_g2s1_conf_dict, s_mask2_dict)
+        #
+
+        # if args.adaptive_loss:
+        #     masking_ratio = (360 - masked_fov) / 360
+        #     loss1 = adaptive_cross_entropy(student_corr1, teacher_corr, args.levels, weight=masking_ratio, s_temp=args.student_temp, t_temp=args.teacher_temp)
+        #     loss2 = adaptive_cross_entropy(student_corr2, teacher_corr, args.levels, weight=1 - masking_ratio, s_temp=args.student_temp, t_temp=args.teacher_temp)
+        #     weight1 = masking_ratio.repeat(2, 1)
+        #     weight2 = 1 - weight1
+        #     loss = torch.mean(weight1 * loss1 + weight2 * loss2)
+        # else:
+        #     loss1 = cross_entropy(student_corr1, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
+        #     loss2 = cross_entropy(student_corr2, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
+        #     loss = loss1 + loss2
+
+        if args.kl_loss:
+            loss = kl_divergence(student_corr, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
+        elif args.wd_loss:
+            loss = sparse_wasserstein(student_corr, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
+        else:
+            loss = cross_entropy(student_corr, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
+
+
+
 
         # teacher_corr = generate_gaussian_heatmap(teacher_corr, args.levels, args.sigma)
         # if args.adaptive_loss:
@@ -153,15 +172,15 @@ def train_epoch_distillation(args, teacher, student, train_loader, criterion, op
         if i_batch % 25 == 0 and args.visualize:
             if args.save_visualization:
                 save_path10 = f"./vis/distillation/{args.model_name}/train/{epoch}/student0/{sat_gps[0].cpu().numpy()}.png"
-                vis_corr(student_corr1[2][0], sat[0], pano[0], gt_points[0], None, save_path10, temp=args.student_temp)
-                save_path11 = f"./vis/distillation/{args.model_name}/train/{epoch}/student1/{sat_gps[0].cpu().numpy()}.png"
-                vis_corr(student_corr2[2][0], sat[0], pano2[0], gt_points[0], None, save_path11, temp=args.student_temp)
+                vis_corr(student_corr[2][0], sat[0], pano[0], gt_points[0], None, save_path10, temp=args.student_temp)
+                # save_path11 = f"./vis/distillation/{args.model_name}/train/{epoch}/student1/{sat_gps[0].cpu().numpy()}.png"
+                # vis_corr(student_corr2[2][0], sat[0], pano2[0], gt_points[0], None, save_path11, temp=args.student_temp)
 
                 save_path2 = f"./vis/distillation/{args.model_name}/train/{epoch}/teacher/{sat_gps[0].cpu().numpy()}.png"
                 vis_corr(teacher_corr[2][0], sat[0], resized_pano[0], gt_points[0], None, save_path2, temp=args.teacher_temp)
             else:
-                vis_corr(student_corr1[2][0], sat[0], pano[0], gt_points[0], None, None, temp=args.student_temp)
-                vis_corr(student_corr2[2][0], sat[0], pano2[0], gt_points[0], None, None, temp=args.student_temp)
+                vis_corr(student_corr[2][0], sat[0], pano[0], gt_points[0], None, None, temp=args.student_temp)
+                # vis_corr(student_corr2[2][0], sat[0], pano2[0], gt_points[0], None, None, temp=args.student_temp)
                 vis_corr(teacher_corr[2][0], sat[0], resized_pano[0], gt_points[0], None, None, temp=args.teacher_temp)
 
     # 返回平均损失
@@ -177,7 +196,7 @@ def train_epoch_self_distillation(args, model, train_loader, criterion, optimize
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
 
@@ -276,7 +295,7 @@ def train_epoch_supervised(args, model, train_loader, criterion, optimizer, devi
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, masked_fov= [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
 
@@ -286,7 +305,7 @@ def train_epoch_supervised(args, model, train_loader, criterion, optimizer, devi
 
         # 前向传播
         s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, \
-            s_g2s_conf_dict, s_mask1_dict = model(sat, pano1, ones1, None, None, meter_per_pixel)
+            s_g2s_conf_dict, s_mask1_dict, s_pano1_conf_dict, s_pano1_feat_dict = model(sat, pano1, ones1, None, None, meter_per_pixel)
 
         corr_maps1 = model.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, s_g2s_conf_dict, s_mask1_dict)
 
@@ -296,7 +315,7 @@ def train_epoch_supervised(args, model, train_loader, criterion, optimizer, devi
         # 计算损失
         # cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
         teacher_corr = generate_gaussian_heatmap(corr_maps1, args.levels, args.sigma, gt=sat_delta)
-        loss = cross_entropy(corr_maps1, teacher_corr, args.levels, s_temp=args.student_temp,
+        loss = cross_entropy_fully_supervised(corr_maps1, teacher_corr, args.levels, s_temp=args.student_temp,
                              t_temp=args.teacher_temp)
         # corr_loss2 = Weakly_supervised_loss_w_GPS_error(corr_maps2, sat_delta[:, 0], sat_delta[:, 1], args.levels,
         #                                                 meter_per_pixel)
@@ -344,9 +363,9 @@ def train_epoch_supervised(args, model, train_loader, criterion, optimizer, devi
         if i_batch % 25 == 0 and args.visualize:
             if args.save_visualization:
                 save_path1 = f"./vis/distillation/{args.model_name}/train/{epoch}/{sat_gps[0].cpu().numpy()}.png"
-                vis_corr(corr_maps1[2][0], sat[0], pano1[0], None, None, save_path1, temp=args.student_temp)
+                vis_corr(corr_maps1[2][0], sat[0], pano1[0], gt_points, None, save_path1, temp=args.student_temp)
             else:
-                vis_corr(corr_maps1[2][0], sat[0], pano1[0], None, None, None, temp=args.student_temp)
+                vis_corr(corr_maps1[2][0], sat[0], pano1[0], gt_points, None, None, temp=args.student_temp)
 
     # 返回平均损失
     return total_loss / len(train_loader)
@@ -361,7 +380,7 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device, epoch):
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
 
@@ -455,7 +474,7 @@ def validate(args, model, val_loader, criterion, device, epoch=-1, vis=False, na
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
-            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, masked_fov = [
                 x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
             city = data_blob[-1]
 
@@ -561,7 +580,7 @@ def validate_distillation(args, teacher, student, val_loader, criterion, device,
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
-            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, masked_fov = [
                 x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
             city = data_blob[-1]
 
@@ -762,7 +781,7 @@ def test_(args, model, val_loader, criterion, device, epoch=-1, vis=False, name=
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
-            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, _ = [
+            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, masked_fov = [
                 x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
             city = data_blob[-1]
 
@@ -1110,7 +1129,7 @@ if __name__ == '__main__':
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="same-2subview", help="none")
+    parser.add_argument('--name', default="same-wd-loss", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=False, action='store_true',
@@ -1155,8 +1174,8 @@ if __name__ == '__main__':
     if config.dataset == 'vigor':
         print("Dataset is VIGOR!")
     if args.train:
-        # train_distillation(config)
         train_distillation(config)
+        # train(config)
     else:
         # pass
         test(config)

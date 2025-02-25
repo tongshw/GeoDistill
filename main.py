@@ -10,7 +10,7 @@ from matplotlib.colors import Normalize
 from test_activation import generate_mask, generate_mask_avg
 from test_vis_attention import visualize_attention_map
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 # os.environ['WANDB_MODE'] = "offline"
 import time
 
@@ -1125,14 +1125,14 @@ if __name__ == '__main__':
     parser.add_argument('--start_step', type=int, default=0)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
-    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="same-wd-loss", help="none")
+    parser.add_argument('--name', default="cross-s1t1", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
-    parser.add_argument('--cross_area', default=False, action='store_true',
+    parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
     parser.add_argument('--train', default=True)
 

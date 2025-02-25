@@ -18,11 +18,13 @@
     "ori_noise": 45,
     "orien": true,
 
-    "restore_ckpt": "/data/test/code/multi-local/location_model/same-corrw100_20241223_185200.pth",
+    "restore_ckpt": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
+    "restore_ckpt1": "/data/test/code/multi-local/location_model/same-corrw100_20241223_185200.pth",
     "teacher_ckpt": null,
     "student_ckpt": null,
     "model1": "/data/test/code/multi-local/location_model/best/cross-randomfov180-240_20250120_094602.pth",
-    "model": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
+    "model2": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
+    "model": "/data/test/code/multi-local/distillation_model/student/same-kl-loss_20250223_194329.pth",
     "save_path": "distillation_model",
     "teacher": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "student": "/data/test/code/multi-local/distillation_model/teacher/best/cross-randomfov180-240_20250120_094602.pth",
@@ -31,8 +33,8 @@
     "epsilon": 1e-7,
     "clip": 1.0,
     "gamma": 0.85 ,
-    "student_temp": 0.06,
-    "teacher_temp": 0.06,
+    "student_temp": 1,
+    "teacher_temp": 1,
     "ema": 0.9,
     "sigma": 4,
     "self_distillation_w": 0.1,
@@ -60,15 +62,15 @@
     "SUM_FREQ": 100,
     "vis_freq": 100,
 
-    "visualize": true,
-    "save_visualization": true,
-    "wandb": false,
+    "visualize": false,
+    "save_visualization": false,
+    "wandb": true,
 
-    "mask_activation": false,
-    "mask_ratio": 0.3,
+    "mask_activation": true,
+    "mask_ratio": 0.2,
 
     "adaptive_loss": false,
     "kl_loss": false,
-    "ce_loss": false,
-    "wd_loss": true
+    "ce_loss": true,
+    "wd_loss": false
 }

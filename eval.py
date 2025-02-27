@@ -81,9 +81,9 @@ def validate_single(args, model, sat, grd, mask, sat_delta, sat_gps, meter_per_p
             print(f"uncertainty:{calculate_entropy(corr_map1[i])}")
             if vis:
                 save_path = f"./vis/uncertainty/{args.model_name}/{sat_gps[i].cpu().numpy()}/{i}.png"
-                vis_corr(corr[i], sat[i], grd[i], gt_points[i], [pred_x[i], pred_y[i]], save_path, temp=0.06)
+                vis_corr(corr[i], sat[i], grd[i], gt_points[i], [pred_x[i], pred_y[i]], save_path, temp=0.1)
             else:
-                vis_corr(corr[i], sat[i], grd[i], gt_points[i], [pred_x[i], pred_y[i]], None, temp=0.06)
+                vis_corr(corr[i], sat[i], grd[i], gt_points[i], [pred_x[i], pred_y[i]], None, temp=1)
 
     return
 
@@ -92,7 +92,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default="dataset/config.json", type=str, help="path of config file")
-    parser.add_argument('--img_path', default="/data/test/code/multi-local/image/better/4/pano", type=str, help="path of config file")
+    parser.add_argument('--img_path', default="/data/test/code/multi-local/image/worse/1/pano", type=str, help="path of config file")
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
     parser.add_argument('--epochs', type=int, default=20)

@@ -2,11 +2,13 @@ import argparse
 import copy
 import json
 import os
+import random
 
 import cv2
 import numpy as np
 from matplotlib.colors import Normalize
 
+from test_MEA import generate_MAE_mask, generate_batch_mask
 from test_activation import generate_mask, generate_mask_avg
 from test_vis_attention import visualize_attention_map
 
@@ -70,14 +72,20 @@ def train_epoch_distillation(args, teacher, student, train_loader, criterion, op
         t_sat_feat_dict, t_sat_conf_dict, t_g2s_feat_dict, \
             t_g2s_conf_dict, t_mask1_dict, t_pano1_conf_dict, t_pano1_feat_dict = teacher(sat, resized_pano, None, None, None,
                                                                            meter_per_pixel)
+        pano = pano1
+        mask_pano = ones1
         if args.mask_activation:
             mask_pano = generate_mask_avg(t_pano1_feat_dict[3], args.mask_ratio)
             mask_pano = mask_pano.permute(0, 2, 3, 1).repeat(1, 1, 1, 3)
             pano = resized_pano * mask_pano
-        else:
-            mask_pano = ones1
-            pano = pano1
-
+        elif args.mask_MAE:
+            for i in range(resized_pano.shape[0]):
+                r = random.uniform(120/360, 180/360)
+                mask = generate_MAE_mask(resized_pano[i].cpu().numpy(), r)
+                mask = torch.from_numpy(mask).to(resized_pano.device)
+                mask = mask.unsqueeze(-1).repeat(1, 1, 3)
+                mask_pano[i] = mask
+                pano[i] = resized_pano[i] * mask
         s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, \
             s_g2s_conf_dict, s_mask1_dict, s_pano1_conf_dict, s_pano1_feat_dict = student(sat, pano, mask_pano, None, None, meter_per_pixel)
 
@@ -1125,16 +1133,16 @@ if __name__ == '__main__':
     parser.add_argument('--start_step', type=int, default=0)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-s1t1", help="none")
+    parser.add_argument('--name', default="cross-MAEmask-0.75-infer", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
-    parser.add_argument('--train', default=True)
+    parser.add_argument('--train', default=False)
 
     parser.add_argument('--best_dis', type=float, default=1e8)
 

@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="shaowen@10.19.126.184:22 password" confirmBeforeUploading="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="shaowen@10.19.138.103:22 password" confirmBeforeUploading="false">
     <option name="confirmBeforeUploading" value="false" />
     <serverData>
-      <paths name="shaowen@10.19.126.184:22 password">
+      <paths name="shaowen@10.19.138.103:22 password">
         <serverdata>
           <mappings>
             <mapping deploy="/data/test/code/multi-local" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>
-      <paths name="shaowen@10.19.126.184:22 password (2)">
+      <paths name="shaowen@10.19.138.103:22 password (2)">
         <serverdata>
           <mappings>
-            <mapping deploy="/data/test/code/multi-local" local="$PROJECT_DIR$" />
+            <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
-      <paths name="shaowen@10.19.126.184:22 password (3)">
+      <paths name="test@10.19.138.58:22 password">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />

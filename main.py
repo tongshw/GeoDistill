@@ -12,7 +12,7 @@ from test_MEA import generate_MAE_mask, generate_batch_mask
 from test_activation import generate_mask, generate_mask_avg
 from test_vis_attention import visualize_attention_map
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 # os.environ['WANDB_MODE'] = "offline"
 import time
 
@@ -1137,7 +1137,7 @@ if __name__ == '__main__':
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-MAEmask-0.75-infer", help="none")
+    parser.add_argument('--name', default="cross-vanilla-infer", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',

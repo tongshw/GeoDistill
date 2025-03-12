@@ -24,7 +24,7 @@
     "student_ckpt": null,
     "model1": "/data/test/code/multi-local/location_model/best/cross-randomfov180-240_20250120_094602.pth",
     "model2": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
-    "model": "/data/test/code/multi-local/distillation_model/teacher/cross-MAEmask-0.75_20250226_194656.pth",
+    "model": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "save_path": "distillation_model",
     "teacher": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "student": "/data/test/code/multi-local/distillation_model/teacher/best/cross-randomfov180-240_20250120_094602.pth",
@@ -64,7 +64,7 @@
 
     "visualize": true,
     "save_visualization": false,
-    "wandb": true,
+    "wandb": false,
 
     "mask_activation": false,
     "mask_ratio": 0.2,

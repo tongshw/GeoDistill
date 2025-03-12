@@ -84,7 +84,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default="dataset/config.json", type=str, help="path of config file")
     parser.add_argument('--img_path', default="/data/dataset/CVUSA/bingmap/20", type=str, help="path of config file")
-    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])

@@ -4,7 +4,7 @@ import os
 
 from eval_uncertainty import calculate_entropy
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 import cv2
 import numpy as np
@@ -92,7 +92,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default="dataset/config.json", type=str, help="path of config file")
-    parser.add_argument('--img_path', default="/data/test/code/multi-local/image/worse/1/pano", type=str, help="path of config file")
+    parser.add_argument('--img_path', default="/data/test/code/multi-local/image/performance/pano", type=str, help="path of config file")
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
     parser.add_argument('--epochs', type=int, default=20)

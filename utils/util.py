@@ -8,6 +8,8 @@ from matplotlib import pyplot as plt, gridspec
 from matplotlib.colors import Normalize
 import torch.nn.functional as F
 from PIL import Image
+from sklearn.decomposition import PCA
+
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -424,3 +426,150 @@ def visualize_distributions(distance_t, distance_s, output_dir, bins=None):
     plt.close()
 
     # print(f"Plots saved in {output_dir}")
+
+
+def visualize_feature_map_pca(feature_map, index=0):
+    """
+    使用 PCA 对 feature map 进行降维并可视化。
+    :param feature_map: 形状为 (B, C, H, W) 的张量
+    :param index: 选择 batch 维度中的哪一个样本进行可视化
+    """
+    assert feature_map.dim() == 4, "Feature map should have shape (B, C, H, W)"
+    feature = feature_map[index]  # 选择 batch 内的某个样本, 形状 (C, H, W)
+    C, H, W = feature.shape
+
+    # 将 (C, H, W) 转换为 (H*W, C) 以便 PCA 处理
+    feature_reshaped = feature.view(C, -1).T  # 变为 (H*W, C)
+
+    # 进行 PCA 降维到 3 维
+    pca = PCA(n_components=3)
+    feature_pca = pca.fit_transform(feature_reshaped)  # (H*W, 3)
+
+    # 归一化到 [0, 1] 以便可视化
+    feature_pca -= feature_pca.min()
+    feature_pca /= feature_pca.max()
+
+    # 重新 reshape 回 (H, W, 3)
+    feature_pca_image = feature_pca.reshape(H, W, 3)
+
+    # 可视化
+    plt.figure(figsize=(6, 6))
+    plt.imshow(feature_pca_image)
+    plt.axis('off')
+    plt.title("Feature Map Visualization via PCA")
+    plt.show()
+
+
+def visualize_feature_map(feature_map, original_image=None, save_path=None):
+    """
+    可视化特征图
+
+    参数:
+        feature_map: 特征图张量
+        original_image: 原始图像 (可选)，用于叠加热力图
+        save_path: 保存可视化结果的路径 (可选)
+    """
+    # 确保输入是numpy数组
+    if isinstance(feature_map, torch.Tensor):
+        feature_map = feature_map.detach().cpu().numpy()
+
+    # 检查并调整维度顺序
+    if len(feature_map.shape) == 4:
+        # 如果是[B,C,H,W]
+        feature_map = feature_map[0]  # 只取第一个样本
+
+    if feature_map.shape[0] < feature_map.shape[1] and feature_map.shape[0] < feature_map.shape[2]:
+        # 如果是 [C,H,W] 格式
+        attention_map = np.mean(feature_map, axis=0)
+    else:
+        # 如果是 [H,W,C] 格式
+        attention_map = np.mean(feature_map, axis=-1)
+
+    # 归一化到0-1范围
+    attention_map = (attention_map - attention_map.min()) / (attention_map.max() - attention_map.min() + 1e-8)
+
+    # 确保是单通道8位图像
+    attention_map_uint8 = np.uint8(255 * attention_map)
+
+    # 生成热力图
+    heatmap = cv2.applyColorMap(attention_map_uint8, cv2.COLORMAP_JET)
+
+    # 如果提供了原始图像，则叠加热力图到原图
+    if original_image is not None:
+        # 处理原始图像
+        if isinstance(original_image, str):
+            # 如果是图像路径
+            original_img = Image.open(original_image).convert('RGB')
+            original_img = np.array(original_img)
+        elif isinstance(original_image, np.ndarray):
+            # 如果已经是numpy数组
+            original_img = original_image.copy()
+        elif isinstance(original_image, torch.Tensor):
+            # 如果是torch张量
+            original_img = original_image.detach().cpu().numpy()
+            if len(original_img.shape) == 4:
+                # 如果是[B,C,H,W]格式
+                original_img = original_img[0]  # 取第一个样本
+
+            if original_img.shape[0] == 3 and len(original_img.shape) == 3:
+                # 如果是[C,H,W]格式，转换为[H,W,C]
+                original_img = np.transpose(original_img, (1, 2, 0))
+
+        # 确保像素值在0-1之间或0-255之间
+        if original_img.max() <= 1.0:
+            # 如果是0-1范围，转换为0-255
+            original_img_display = (original_img * 255).astype(np.uint8)
+        else:
+            # 如果已经是0-255范围
+            original_img_display = original_img.astype(np.uint8)
+
+        # 调整原图大小以匹配热力图
+        original_img_resized = cv2.resize(original_img_display, (attention_map.shape[1], attention_map.shape[0]))
+
+        # 确保原图是RGB顺序(而不是BGR)
+        if len(original_img_resized.shape) == 3 and original_img_resized.shape[2] == 3:
+            # 对于matplotlib显示，确保是RGB顺序
+            original_img_rgb = cv2.cvtColor(original_img_resized, cv2.COLOR_BGR2RGB)
+        else:
+            original_img_rgb = original_img_resized
+
+        # 叠加热力图到原图 (OpenCV使用BGR顺序)
+        superimposed_img = cv2.addWeighted(original_img_resized, 0.6, heatmap, 0.4, 0)
+
+        # 显示原图和热力图叠加结果
+        plt.figure(figsize=(15, 5))
+
+        plt.subplot(1, 3, 1)
+        plt.imshow(original_img_rgb)
+        plt.title('Original Image')
+        plt.axis('off')
+
+        plt.subplot(1, 3, 2)
+        plt.imshow(attention_map, cmap='jet')
+        plt.title('Attention Map')
+        plt.axis('off')
+
+        plt.subplot(1, 3, 3)
+        # 转换为RGB顺序用于matplotlib显示
+        superimposed_img_rgb = cv2.cvtColor(superimposed_img, cv2.COLOR_BGR2RGB)
+        plt.imshow(superimposed_img_rgb)
+        plt.title('Overlay')
+        plt.axis('off')
+    else:
+        # 如果没有原始图像，只显示热力图
+        plt.figure(figsize=(8, 6))
+        plt.imshow(attention_map, cmap='jet')
+        plt.title('Feature Map Attention')
+        plt.colorbar()
+        plt.axis('off')
+
+    plt.tight_layout()
+
+    # 保存结果
+    if save_path:
+        plt.savefig(save_path)
+        print(f"可视化结果已保存到 {save_path}")
+
+    plt.show()
+
+    return attention_map

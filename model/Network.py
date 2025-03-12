@@ -18,7 +18,8 @@ import torchvision.transforms.functional as TF
 
 from test_activation import generate_mask
 from test_vis_attention import visualize_attention_map
-from utils.util import grid_sample
+from utils.pca import pcl_features_to_RGB
+from utils.util import grid_sample, visualize_feature_map_pca, visualize_feature_map
 
 
 class LocalizationNet(nn.Module):
@@ -224,6 +225,12 @@ class LocalizationNet(nn.Module):
         sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
         pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
 
+        # visualize_feature_map_pca(pano1_feat_dict[3].detach().cpu())
+        # pcl_features_to_RGB(pano1_feat_dict[3].detach().cpu())
+        visualize_feature_map(pano1_feat_dict[3].detach().cpu(), ((pano1_img+1)/2).detach().cpu())
+        visualize_feature_map(sat_feat_dict[3].detach().cpu(), ((sat_img + 1) / 2).detach().cpu())
+        # visualize_feature_map_pca(sat_feat_dict[3].detach().cpu())
+        # pcl_features_to_RGB(sat_feat_dict[3].detach().cpu())
         # batch_size, channel, height, width = pano1_feat_dict[3].shape
 
         # 计算每个位置的L2范数

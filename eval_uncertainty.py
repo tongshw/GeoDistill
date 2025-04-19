@@ -8,7 +8,7 @@ import numpy as np
 from matplotlib.colors import Normalize
 import torch.nn.functional as F
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 # os.environ['WANDB_MODE'] = "offline"
 import time
 from PIL import Image
@@ -219,14 +219,14 @@ def validate_distillation(args, model, val_loader, criterion, device, epoch=-1, 
                 # entropy_t = calculate_entropy(corr_map1)
                 # entropy_s = calculate_entropy(corr_map2)
 
-                if distance_t[i] > distance_s[i]:
+                if (distance_t[i] - distance_s[i])>0.5:
                     save_path1 = None
                     save_path2 = None
                     if args.save_visualization:
                         gps = sat_gps[i].cpu().numpy()
                         delta_x, delta_y = sat_delta[i][0].cpu().numpy().item(), sat_delta[i][1].cpu().numpy().item()
-                        save_path1 = f"./vis/uncertainty/{args.model_name}/before/{city[i]}_{delta_x},{delta_y}_{gps}.png"
-                        save_path2 = f"./vis/uncertainty/{args.model_name}/after/{city[i]}_{delta_x},{delta_y}_{gps}.png"\
+                        save_path1 = f"./vis/uncertainty/{args.model_name}/360/{city[i]}_{delta_x},{delta_y}_{gps}.png"
+                        save_path2 = f"./vis/uncertainty/{args.model_name}/masked/{city[i]}_{delta_x},{delta_y}_{gps}.png"\
 
                         # sat_path = f"./image/{args.model_name}/sat/{city[i]}_{delta_x},{delta_y}_{gps}.png"
                         # pano_path = f"./image/{args.model_name}/pano/{city[i]}_{delta_x},{delta_y}_{gps}.png"
@@ -235,8 +235,8 @@ def validate_distillation(args, model, val_loader, criterion, device, epoch=-1, 
                         # pano_img = Image.fromarray(resized_pano[i].cpu().numpy().astype(np.uint8))
                         # pano_img.save(pano_path)
 
-                    vis_corr(corr_t[i], sat[i], resized_pano[i], gt_points[i], [pred_x_t[i], pred_y_t[i]], save_path1, temp=0.1)
-                    vis_corr(corr_s[i], sat[i], pano1[i], gt_points[i], [pred_x_s[i], pred_y_s[i]], save_path2, temp=0.1)
+                    vis_corr(corr_t[i], sat[i], resized_pano[i], gt_points[i], [pred_x_t[i], pred_y_t[i]], save_path1, temp=1)
+                    vis_corr(corr_s[i], sat[i], pano1[i], gt_points[i], [pred_x_s[i], pred_y_s[i]], save_path2, temp=1)
 
 
             # for i in range(B):
@@ -339,12 +339,12 @@ def test(args):
 
     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
 
-    model_s = LocalizationNet(args).to(device)
-
-    model_s, start_epoch, best_val_loss = load_trained_model(model_s, args.model1, device)
+    # model_s = LocalizationNet(args).to(device)
+    #
+    # model_s, start_epoch, best_val_loss = load_trained_model(model_s, args.model1, device)
 
     criterion = nn.CrossEntropyLoss()
-    mean_dis_t, mean_dis_s, median_dis_t, median_dis_s = validate_distillation(args, model, test_loader, criterion, device, name="student", model_s=model_s)
+    mean_dis_t, mean_dis_s, median_dis_t, median_dis_s = validate_distillation(args, model, test_loader, criterion, device, name="student", model_s=None)
 
 if __name__ == '__main__':
 
@@ -358,7 +358,7 @@ if __name__ == '__main__':
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-eval_beforeVSafter", help="none")
+    parser.add_argument('--name', default="cross-eval_360VSmask-s1", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',

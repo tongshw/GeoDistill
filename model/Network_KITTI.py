@@ -19,7 +19,8 @@ import torchvision.transforms.functional as TF
 from test_activation import generate_mask
 from test_vis_attention import visualize_attention_map
 from utils.pca import pcl_features_to_RGB
-from utils.util import grid_sample, visualize_feature_map_pca, visualize_feature_map
+from utils.util import grid_sample, visualize_feature_map_pca, visualize_feature_map, get_meter_per_pixel, \
+    get_process_satmap_sidelength, get_camera_height
 
 
 class LocalizationNet(nn.Module):
@@ -29,6 +30,10 @@ class LocalizationNet(nn.Module):
         self.levels = args.levels
         self.channels = args.channels
 
+        self.shift_range_lon = args.shift_range_lon
+        self.shift_range_lat = args.shift_range_lat
+        self.rotation_range = args.rotation_range
+
         input_dim = 3
         self.sat_VGG = VGGUnet(self.levels, self.channels)
         self.grd_VGG = VGGUnet(self.levels, self.channels) if args.p_siamese else None
@@ -36,6 +41,12 @@ class LocalizationNet(nn.Module):
         feature_dim = 320
         self.rotation_range = 0
         self.grd_height = -2
+
+        self.meters_per_pixel = {}
+        meter_per_pixel = get_meter_per_pixel()
+        for level in range(4):
+            self.meters_per_pixel[level] = meter_per_pixel * (2 ** (3 - level))
+
 
     def sat2grd_uv(self, rot, shift_u, shift_v, level, H, W, meter_per_pixel):
         '''
@@ -82,20 +93,121 @@ class LocalizationNet(nn.Module):
 
         return uv
 
-    def project_grd_to_map(self, grd_feature, grd_confidence, rot, shift_u, shift_v, level, meter_per_pixel):
-        '''
-        grd_f.shape = [B, C, H, W]
-        shift_u.shape = [B]
-        shift_v.shape = [B]
-        '''
-        B, C, H, W = grd_feature.size()
-        uv = self.sat2grd_uv(rot, shift_u, shift_v, level, H, W, meter_per_pixel)  # [B, S, S, 2]
-        grd_f_trans, _ = grid_sample(grd_feature, uv)
-        if grd_confidence is not None:
-            grd_c_trans, _ = grid_sample(grd_confidence, uv)
+    def sat2world(self, satmap_sidelength):
+        # satellite: u:east , v:south from bottomleft and u_center: east; v_center: north from center
+        # realword: X: south, Y:down, Z: east   origin is set to the ground plane
+
+        # meshgrid the sat pannel
+        i = j = torch.arange(0, satmap_sidelength).cuda()  # to(self.device)
+        ii, jj = torch.meshgrid(i, j)  # i:h,j:w
+
+        # uv is coordinate from top/left, v: south, u:east
+        uv = torch.stack([jj, ii], dim=-1).float()  # shape = [satmap_sidelength, satmap_sidelength, 2]
+
+        # sat map from top/left to center coordinate
+        u0 = v0 = satmap_sidelength // 2
+        uv_center = uv - torch.tensor(
+            [u0, v0]).cuda()  # .to(self.device) # shape = [satmap_sidelength, satmap_sidelength, 2]
+
+        # affine matrix: scale*R
+        meter_per_pixel = get_meter_per_pixel()
+        meter_per_pixel *= get_process_satmap_sidelength() / satmap_sidelength
+        R = torch.tensor([[0, 1], [1, 0]]).float().cuda()  # to(self.device) # u_center->z, v_center->x
+        Aff_sat2real = meter_per_pixel * R  # shape = [2,2]
+
+        # Trans matrix from sat to realword
+        XZ = torch.einsum('ij, hwj -> hwi', Aff_sat2real,
+                          uv_center)  # shape = [satmap_sidelength, satmap_sidelength, 2]
+
+        Y = torch.zeros_like(XZ[..., 0:1])
+        ones = torch.ones_like(Y)
+        sat2realwap = torch.cat([XZ[:, :, :1], Y, XZ[:, :, 1:], ones], dim=-1)  # [sidelength,sidelength,4]
+
+        return sat2realwap
+
+
+    def World2GrdImgPixCoordinates(self, ori_shift_u, ori_shift_v, ori_heading, XYZ_1, ori_camera_k, grd_H, grd_W, ori_grdH,
+                             ori_grdW):
+        # realword: X: south, Y:down, Z: east
+        # camera: u:south, v: down from center (when heading east, need to rotate heading angle)
+        # XYZ_1:[H,W,4], heading:[B,1], camera_k:[B,3,3], shift:[B,2]
+        B = ori_heading.shape[0]
+        shift_u_meters = self.shift_range_lon * ori_shift_u
+        shift_v_meters = self.shift_range_lat * ori_shift_v
+        heading = ori_heading * self.rotation_range / 180 * np.pi
+
+        cos = torch.cos(-heading)
+        sin = torch.sin(-heading)
+        zeros = torch.zeros_like(cos)
+        ones = torch.ones_like(cos)
+        R = torch.cat([cos, zeros, -sin, zeros, ones, zeros, sin, zeros, cos], dim=-1)  # shape = [B,9]
+        R = R.view(B, 3, 3)  # shape = [B,3,3]
+
+        camera_height = get_camera_height()
+        # camera offset, shift[0]:east,Z, shift[1]:north,X
+        height = camera_height * torch.ones_like(shift_u_meters)
+        T = torch.cat([shift_v_meters, height, -shift_u_meters], dim=-1)  # shape = [B, 3]
+        T = torch.unsqueeze(T, dim=-1)  # shape = [B,3,1]
+        # T = torch.einsum('bij, bjk -> bik', R, T0)
+        # T = R @ T0
+
+        # P = K[R|T]
+        camera_k = ori_camera_k.clone()
+        camera_k[:, :1, :] = ori_camera_k[:, :1,
+                             :] * grd_W / ori_grdW  # original size input into feature get network/ output of feature get network
+        camera_k[:, 1:2, :] = ori_camera_k[:, 1:2, :] * grd_H / ori_grdH
+        # P = torch.einsum('bij, bjk -> bik', camera_k, torch.cat([R, T], dim=-1)).float()  # shape = [B,3,4]
+        P = camera_k @ torch.cat([R, T], dim=-1)
+
+        # uv1 = torch.einsum('bij, hwj -> bhwi', P, XYZ_1)  # shape = [B, H, W, 3]
+        uv1 = torch.sum(P[:, None, None, :, :] * XYZ_1[None, :, :, None, :], dim=-1)
+        # only need view in front of camera ,Epsilon = 1e-6
+        uv1_last = torch.maximum(uv1[:, :, :, 2:], torch.ones_like(uv1[:, :, :, 2:]) * 1e-6)
+        uv = uv1[:, :, :, :2] / uv1_last  # shape = [B, H, W, 2]
+
+        H, W = uv.shape[1:-1]
+        assert (H == W)
+
+        # with torch.no_grad():
+        mask = torch.greater(uv1_last, torch.ones_like(uv1[:, :, :, 2:]) * 1e-6) * \
+               torch.greater_equal(uv[:, :, :, 0:1], torch.zeros_like(uv[:, :, :, 0:1])) * \
+               torch.less(uv[:, :, :, 0:1], torch.ones_like(uv[:, :, :, 0:1]) * grd_W) * \
+               torch.greater_equal(uv[:, :, :, 1:2], torch.zeros_like(uv[:, :, :, 1:2])) * \
+               torch.less(uv[:, :, :, 1:2], torch.ones_like(uv[:, :, :, 1:2]) * grd_H)
+        uv = uv * mask
+
+        return uv, mask
+        # return uv1
+
+
+    def project_grd_to_map(self, grd_f, grd_c, shift_u, shift_v, heading, camera_k, satmap_sidelength, ori_grdH,
+                           ori_grdW, require_jac=True):
+        # inputs:
+        #   grd_f: ground features: B,C,H,W
+        #   shift: B, S, 2
+        #   heading: heading angle: B,S
+        #   camera_k: 3*3 K matrix of left color camera : B*3*3
+        # return:
+        #   grd_f_trans: B,S,E,C,satmap_sidelength,satmap_sidelength
+
+        B, C, H, W = grd_f.size()
+
+        XYZ_1 = self.sat2world(satmap_sidelength)  # [ sidelength,sidelength,4]
+
+        uv, mask = self.World2GrdImgPixCoordinates(shift_u, shift_v, heading, XYZ_1, camera_k, H, W, ori_grdH, ori_grdW)  # [B, S, E, H, W,2]
+        # [B, H, W, 2], [B, H, W, 1]
+
+        grd_f_trans, new_jac = grid_sample(grd_f, uv, None)
+        # [B,C,sidelength,sidelength], [3, B, C, sidelength, sidelength]
+        grd_f_trans = grd_f_trans * mask[:, None, :, :, 0]
+        if grd_c is not None:
+            grd_c_trans, _ = grid_sample(grd_c, uv)
+            grd_c_trans = grd_c_trans * mask[:, None, :, :, 0]
         else:
             grd_c_trans = None
-        return grd_f_trans, grd_c_trans, uv
+
+
+        return grd_f_trans, grd_c_trans, uv, mask
 
     def forward_2grd(self, sat_img, pano1, ones1, pano2, ones2, meter_per_pixel):
 
@@ -200,108 +312,90 @@ class LocalizationNet(nn.Module):
         return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask1_dict, mask2_dict, \
             pano1_conf_dict, pano1_conf_dict
 
-    def forward_1grd(self, sat_img, pano1, ones1, meter_per_pixel):
-        B = sat_img.shape[0]
-        # shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        # shift_v = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        # grd1_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
-        #     pano1.permute(0, 3, 1, 2), pano1, None, shift_u, shift_v, 2, meter_per_pixel)
-        # plt.figure(figsize=(10, 5))
-        # plt.imshow(grd1_proj[1].permute(1, 2, 0).cpu().detach().numpy().astype(np.uint8))
-        # plt.show()
+    def forward_1grd(self, sat_map, grd_img_left, left_camera_k):
+        '''
+        rot_corr
+        Args:
+            sat_map: [B, C, A, A] A--> sidelength
+            left_camera_k: [B, 3, 3]
+            grd_img_left: [B, C, H, W]
+            gt_shift_u: [B, 1] u->longitudinal
+            gt_shift_v: [B, 1] v->lateral
+            gt_heading: [B, 1] east as 0-degree
+            mode:
+            file_name:
 
-        sat_img = 2 * (sat_img / 255.0) - 1.0
-        pano1_img = 2 * (pano1 / 255.0) - 1.0
+        Returns:
 
-        # sat_img = sat_img / 255.0
-        # pano1_img = pano1 / 255.0
+        '''
 
-        sat_img = sat_img.contiguous()
-        pano1_img = pano1_img.contiguous()
+        B, _, ori_grdH, ori_grdW = grd_img_left.shape
+        ori_grd = grd_img_left.clone()
 
-        pano1_img = pano1_img.permute(0, 3, 1, 2)
+        shift_u = torch.zeros([B, 1], dtype=torch.float32, requires_grad=True, device=sat_map.device)
+        shift_v = torch.zeros([B, 1], dtype=torch.float32, requires_grad=True, device=sat_map.device)
 
-        sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
-        pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
+        g2s_feat_dict = {}
+        g2s_conf_dict = {}
 
-        # visualize_feature_map_pca(pano1_feat_dict[3].detach().cpu())
-        # pcl_features_to_RGB(pano1_feat_dict[3].detach().cpu())
-        # visualize_feature_map(pano1_feat_dict[3].detach().cpu(), ((pano1_img+1)/2).detach().cpu())
-        # visualize_feature_map(sat_feat_dict[3].detach().cpu(), ((sat_img + 1) / 2).detach().cpu())
-        # visualize_feature_map_pca(sat_feat_dict[3].detach().cpu())
-        # pcl_features_to_RGB(sat_feat_dict[3].detach().cpu())
-        # batch_size, channel, height, width = pano1_feat_dict[3].shape
-
-        # 计算每个位置的L2范数
-        # l2_norms_pano = torch.norm(pano1_feat_dict[3], p=2, dim=1, keepdim=True)
-        # l2_norms_sat = torch.norm(sat_feat_dict[3], p=2, dim=1, keepdim=True)
-        # mask_pano = generate_mask(pano1_feat_dict[3], 0.2)
-        #
-        # # 对L2范数进行归一化
-        # attention_map_pano = (l2_norms_pano - l2_norms_pano.min()) / (l2_norms_pano.max() - l2_norms_pano.min())
-        # attention_map_sat = (l2_norms_sat - l2_norms_sat.min()) / (l2_norms_sat.max() - l2_norms_sat.min())
-        # pano = (((pano1_img[0] + 1)/2 * 255) * mask_pano[0]).permute(1, 2, 0).cpu().numpy()
-        #
-        # visualize_attention_map(attention_map_pano[0].cpu().numpy(), attention_map_sat[0].cpu().numpy(),
-        #                         pano,
-        #                         ((sat_img[0] + 1)/2 * 255).permute(1, 2, 0).cpu().numpy())
+        heading = torch.zeros([B, 1], dtype=torch.float32, requires_grad=True, device=sat_map.device)
+        shift_lats = None
+        shift_lons = None
 
 
+        grd_feat_dict_forT, grd_conf_dict_forT = self.grd_VGG(grd_img_left)
+        sat_feat_dict_forT, sat_conf_dict_forT = self.sat_VGG(sat_map)
 
-        g2s1_feat_dict = {}
-        g2s1_conf_dict = {}
-        mask1_dict = {}
-        # corr_maps = {}
-        B = sat_conf_dict[0].shape[0]
+        grd_uv_dict = {}
+        mask_dict = {}
+        for level in range(4):
+            # meter_per_pixel = self.meters_per_pixel[level]
+            sat_feat = sat_feat_dict_forT[level]
+            grd_feat = grd_feat_dict_forT[level]
 
-        shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        shift_v = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        mask1 = None
-        if ones1 is not None:
-            ones1 = ones1.cpu().numpy()
+            A = sat_feat.shape[-1]
+            grd_feat_proj, grd_conf_proj, grd_uv, mask = self.project_grd_to_map(
+                grd_feat, grd_conf_dict_forT[level], shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
+                ori_grdW,
+                require_jac=False)
+
+            # grd_proj, grd_proj, _, mask = self.project_grd_to_map(
+            #     ori_grd, ori_grd, shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
+            #     ori_grdW,
+            #     require_jac=False)
+            # fig = plt.figure(figsize=(10, 5), dpi=100)  # 可自定义尺寸
+            # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
+            # ax.axis('off')  # 不显示坐标轴
+            # ax.imshow(grd_proj[0].detach().cpu().numpy().transpose(1, 2, 0))
+            # plt.show()
+
+            g2s_feat_dict[level] = grd_feat_proj
+            g2s_conf_dict[level] = grd_conf_proj
+            grd_uv_dict[level] = grd_uv
+            mask_dict[level] = mask
+
 
         for _, level in enumerate(self.levels):
-            sat_feat = sat_feat_dict[level]
-            pano1_feat = pano1_feat_dict[level]
-            pano1_conf = pano1_conf_dict[level]
 
-            B, c, h, w = pano1_feat.shape
+            meter_per_pixel = self.meters_per_pixel[level]
+            sat_feat = sat_feat_dict_forT[level]
+
             A = sat_feat.shape[-1]
-            crop_H = int(A * 0.4)
-            crop_W = int(A * 0.4)
 
-            if ones1 is not None:
-                resized_batch1 = []
+            crop_H = int(A - 20 * 3 / meter_per_pixel)
+            crop_W = int(A - 20 * 3 / meter_per_pixel)
+            g2s_feat = TF.center_crop(g2s_feat_dict[level], [crop_H, crop_W])
 
-                for i in range(B):  # 遍历 batch
-                    resized_image1 = cv2.resize(ones1[i], (w, h), interpolation=cv2.INTER_LINEAR)
-                    resized_batch1.append(resized_image1)
+            g2s_conf = TF.center_crop(g2s_conf_dict[level], [crop_H, crop_W])
 
-                # 将结果转回 NumPy 数组，然后再转回 PyTorch 张量
-                resized_batch1 = np.stack(resized_batch1)  # 将所有图片拼接成一个数组
-                mask1 = torch.from_numpy(resized_batch1)
-                mask1 = mask1.to(sat_feat.device).permute(0, 3, 1, 2)
-                mask1_proj, _, grd_uv = self.project_grd_to_map(
-                    mask1, pano1_conf, None, shift_u, shift_v, level, meter_per_pixel)
-                mask1 = TF.center_crop(mask1_proj, [crop_H, crop_W])
-                mask1_dict[level] = mask1
+            g2s_feat_dict[level] = g2s_feat
+            g2s_conf_dict[level] = g2s_conf
 
-            grd1_feat_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
-                pano1_feat, pano1_conf, None, shift_u, shift_v, level, meter_per_pixel)
+        return sat_feat_dict_forT, sat_conf_dict_forT, g2s_feat_dict, g2s_conf_dict, shift_lats, shift_lons
 
-            g2s1_feat = TF.center_crop(grd1_feat_proj, [crop_H, crop_W])
-            g2s1_conf = TF.center_crop(grd1_conf_proj, [crop_H, crop_W])
 
-            g2s1_feat_dict[level] = g2s1_feat
-            g2s1_conf_dict[level] = g2s1_conf
-
-        return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, mask1_dict, pano1_conf_dict, pano1_feat_dict
-
-    def forward(self, sat_img, pano1, ones1, pano2, ones2, meter_per_pixel):
-        if pano2 is not None:
-            return self.forward_2grd(sat_img, pano1, ones1, pano2, ones2, meter_per_pixel)
-        else:
-            return self.forward_1grd(sat_img, pano1, ones1, meter_per_pixel)
+    def forward(self, sat_map, grd_img_left, left_camera_k):
+        return self.forward_1grd(sat_map, grd_img_left, left_camera_k)
 
     def calc_corr_for_train(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask_dict=None,
                             batch_wise=False):
@@ -316,12 +410,6 @@ class LocalizationNet(nn.Module):
                 mask = mask_dict[level]
 
                 mask = mask[:, 0, :, :]
-                # plt.figure(figsize=(4, 4))  # 设置图大小
-                # plt.imshow(mask[0].cpu().detach().numpy(), cmap="viridis")  # 使用 viridis 颜色映射
-                # plt.colorbar(label="Confidence")  # 添加颜色条
-                # plt.title(f"bev mask ")
-                # plt.axis("on")  # 关闭坐标轴
-                # plt.show()
                 mask = mask.unsqueeze(1)
 
                 bev_conf = bev_conf * mask
@@ -391,12 +479,6 @@ class LocalizationNet(nn.Module):
 
         if mask is not None:
             mask = mask[:, 0, :, :]
-            # plt.figure(figsize=(4, 4))  # 设置图大小
-            # plt.imshow(mask[0].cpu().detach().numpy(), cmap="viridis")  # 使用 viridis 颜色映射
-            # plt.colorbar(label="Confidence")  # 添加颜色条
-            # plt.title(f"bev mask ")
-            # plt.axis("on")  # 关闭坐标轴
-            # plt.show()
             mask = mask.unsqueeze(1)
 
             bev_conf = bev_conf * mask

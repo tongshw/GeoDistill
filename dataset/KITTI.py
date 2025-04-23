@@ -59,7 +59,7 @@ train_file_noisy = './dataLoader/train_files_noisy.txt'
 
 
 class SatGrdDataset(Dataset):
-    def __init__(self, root, file,
+    def __init__(self, args, root, file,
                  transform=None, shift_range_lat=20, shift_range_lon=20, rotation_range=10, data_amount=1.):
         self.root = root
 
@@ -68,6 +68,12 @@ class SatGrdDataset(Dataset):
         self.shift_range_meters_lon = shift_range_lon  # in terms of meters
         self.shift_range_pixels_lat = shift_range_lat / self.meter_per_pixel  # shift range is in terms of meters
         self.shift_range_pixels_lon = shift_range_lon / self.meter_per_pixel  # shift range is in terms of meters
+        self.fov_size = args.fov_size
+        self.bev_size = args.bev_size
+        self.fov_decay = args.fov_decay
+        self.dynamic_fov = args.dynamic_fov
+        self.dynamic_low = args.dynamic_low
+        self.dynamic_high = args.dynamic_high
 
         # self.shift_range_meters = shift_range  # in terms of meters
 
@@ -176,19 +182,7 @@ class SatGrdDataset(Dataset):
         theta = np.random.uniform(-1, 1)
         sat_rand_shift_rand_rot = \
             sat_rand_shift.rotate(theta * self.rotation_range)
-        # sat_rand_shift_rand_rot.save('sat_rand_shift_rand_rot.png')
 
-        # # ------ Added for weakly-supervised training ------
-        # cos = np.cos(-heading)
-        # sin = np.sin(-heading)
-        # tx = cos * (utils.CameraGPS_shift_left[0] / self.meter_per_pixel + gt_shift_x * self.shift_range_pixels_lon) \
-        #      - sin * (utils.CameraGPS_shift_left[1] / self.meter_per_pixel - gt_shift_y * self.shift_range_pixels_lat)
-        # ty = sin * (utils.CameraGPS_shift_left[0] / self.meter_per_pixel + gt_shift_x * self.shift_range_pixels_lon) \
-        #      + cos * (utils.CameraGPS_shift_left[1] / self.meter_per_pixel - gt_shift_y * self.shift_range_pixels_lat)
-        # GPS2NewCenter = torch.from_numpy(np.asarray([tx, ty]))
-        # # the new satellite image center's coordinate under (with respect to) the original satellite image (center)
-        # # left--> x positive  down --> y positive   center (0, 0)
-        # # --------------------------------------------------
 
         sat_rand_shift_rand_rot_central_crop = TF.center_crop(sat_rand_shift_rand_rot, SatMap_process_sidelength)
         sat_align_cam_central_crop = TF.center_crop(sat_align_cam, SatMap_process_sidelength)
@@ -198,6 +192,31 @@ class SatGrdDataset(Dataset):
             sat_align_cam_central_crop = self.satmap_transform(sat_align_cam_central_crop)
 
         # gt_corr_x, gt_corr_y = self.generate_correlation_GTXY(gt_shift_x, gt_shift_y, theta)
+        c, h, w = grd_left_imgs[0].shape
+        grd = grd_left_imgs[0]
+
+        if self.dynamic_fov:
+            masked_fov = 360 - np.random.randint(self.dynamic_low, self.dynamic_high)
+        else:
+            masked_fov = 360 - self.fov_size
+
+        start_angle1 = np.random.randint(0, 360 - masked_fov)
+        w_start1 = int(np.round(w / 360 * start_angle1))
+        w_end1 = int(np.round(w / 360 * (start_angle1 + masked_fov)))
+
+        # 创建两个 mask，并应用到原图像上
+        mask1 = np.zeros_like(grd)
+        mask2 = np.zeros_like(grd)
+        grd1 = grd.clone().numpy()
+        grd2 = grd.clone().numpy()
+        ones1 = np.ones_like(grd1)
+        ones2 = np.ones_like(grd2)
+
+        grd1[:, :, w_start1:w_end1] = mask1[:, :, w_start1:w_end1]
+        ones1[:, :, w_start1:w_end1] = mask1[:, :, w_start1:w_end1]
+        ones2 = ones2 - ones1
+        grd2 = grd2 * ones2
+
 
         return sat_align_cam_central_crop, \
             sat_rand_shift_rand_rot_central_crop, \
@@ -205,7 +224,7 @@ class SatGrdDataset(Dataset):
             torch.tensor(-gt_shift_x, dtype=torch.float32).reshape(1), \
             torch.tensor(-gt_shift_y, dtype=torch.float32).reshape(1), \
             torch.tensor(theta, dtype=torch.float32).reshape(1), \
-            file_name, GPS
+            ones1
 
 
 class SatGrdDatasetTest(Dataset):
@@ -458,7 +477,7 @@ class DistanceBatchSampler:
             return (len(self.sampler) + self.batch_size - 1) // self.batch_size  # type: ignore
 
 
-def load_train_data(batch_size, shift_range_lat=20, shift_range_lon=20, rotation_range=10):
+def load_train_data(args, batch_size, shift_range_lat=20, shift_range_lon=20, rotation_range=10):
 
     satmap_transform = transforms.Compose([
         transforms.Resize(size=[SatMap_process_sidelength, SatMap_process_sidelength]),
@@ -473,7 +492,7 @@ def load_train_data(batch_size, shift_range_lat=20, shift_range_lon=20, rotation
         transforms.ToTensor(),
     ])
 
-    train_set = SatGrdDataset(root=root_dir, file=train_file,
+    train_set = SatGrdDataset(args=args, root=root_dir, file=train_file,
                               transform=(satmap_transform, grdimage_transform),
                               shift_range_lat=shift_range_lat,
                               shift_range_lon=shift_range_lon,

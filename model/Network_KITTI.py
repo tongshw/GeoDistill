@@ -312,7 +312,7 @@ class LocalizationNet(nn.Module):
         return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask1_dict, mask2_dict, \
             pano1_conf_dict, pano1_conf_dict
 
-    def forward_1grd(self, sat_map, grd_img_left, left_camera_k):
+    def forward_1grd(self, sat_map, grd_img_left, left_camera_k, fov_mask=None):
         '''
         rot_corr
         Args:
@@ -348,6 +348,7 @@ class LocalizationNet(nn.Module):
 
         grd_uv_dict = {}
         mask_dict = {}
+        fov_mask_dict = {}
         for level in range(4):
             # meter_per_pixel = self.meters_per_pixel[level]
             sat_feat = sat_feat_dict_forT[level]
@@ -358,6 +359,42 @@ class LocalizationNet(nn.Module):
                 grd_feat, grd_conf_dict_forT[level], shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
                 ori_grdW,
                 require_jac=False)
+            B, c, h, w = grd_feat.shape
+            if fov_mask is not None:
+
+                # fig = plt.figure(figsize=(20, 5), dpi=100)  # 可自定义尺寸
+                # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
+                # ax.axis('off')  # 不显示坐标轴
+                # mask = fov_mask[0].detach().cpu().numpy().transpose(1, 2, 0) * 255
+                # ax.imshow(mask.astype(np.uint8))
+                # plt.show()
+
+                resized_batch1 = []
+                for i in range(B):  # 遍历 batch
+                    resized_image1 = cv2.resize(fov_mask[i].detach().cpu().numpy().transpose(1, 2, 0), (w, h), interpolation=cv2.INTER_LINEAR)
+                    resized_batch1.append(resized_image1)
+
+                # fig = plt.figure(figsize=(10, 5), dpi=100)  # 可自定义尺寸
+                # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
+                # ax.axis('off')  # 不显示坐标轴
+                # ax.imshow(resized_batch1[0])
+                # plt.show()
+
+                # 将结果转回 NumPy 数组，然后再转回 PyTorch 张量
+                resized_batch1 = np.stack(resized_batch1)  # 将所有图片拼接成一个数组
+                mask1 = torch.from_numpy(resized_batch1)
+                mask1 = mask1.to(sat_feat.device).permute(0, 3, 1, 2)
+
+                fov_mask_proj, _, _, _ = self.project_grd_to_map(
+                    mask1, grd_conf_dict_forT[level], shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
+                    ori_grdW,
+                    require_jac=False)
+                fov_mask_dict[level] = fov_mask_proj
+                # fig = plt.figure(figsize=(10, 5), dpi=100)  # 可自定义尺寸
+                # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
+                # ax.axis('off')  # 不显示坐标轴
+                # ax.imshow(fov_mask[0])
+                # plt.show()
 
             # grd_proj, grd_proj, _, mask = self.project_grd_to_map(
             #     ori_grd, ori_grd, shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
@@ -390,12 +427,15 @@ class LocalizationNet(nn.Module):
 
             g2s_feat_dict[level] = g2s_feat
             g2s_conf_dict[level] = g2s_conf
+            if fov_mask is not None:
+                g2s_mask = TF.center_crop(fov_mask_dict[level], [crop_H, crop_W])
+                fov_mask_dict[level] = g2s_mask
 
-        return sat_feat_dict_forT, sat_conf_dict_forT, g2s_feat_dict, g2s_conf_dict, shift_lats, shift_lons
+        return sat_feat_dict_forT, sat_conf_dict_forT, g2s_feat_dict, g2s_conf_dict, fov_mask_dict
 
 
-    def forward(self, sat_map, grd_img_left, left_camera_k):
-        return self.forward_1grd(sat_map, grd_img_left, left_camera_k)
+    def forward(self, sat_map, grd_img_left, left_camera_k, fov_mask=None):
+        return self.forward_1grd(sat_map, grd_img_left, left_camera_k, fov_mask)
 
     def calc_corr_for_train(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask_dict=None,
                             batch_wise=False):
@@ -408,6 +448,14 @@ class LocalizationNet(nn.Module):
             bev_conf = bev_conf_dict[level]
             if mask_dict is not None:
                 mask = mask_dict[level]
+
+                # fig = plt.figure(figsize=(5, 5), dpi=100)  # 可自定义尺寸
+                # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
+                # ax.axis('off')  # 不显示坐标轴
+                # mask1 = mask[0].detach().cpu().numpy().transpose(1, 2, 0)
+                # ax.imshow(mask1)
+                # plt.show()
+
 
                 mask = mask[:, 0, :, :]
                 mask = mask.unsqueeze(1)

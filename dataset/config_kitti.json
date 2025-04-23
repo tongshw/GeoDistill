@@ -18,11 +18,11 @@
     "ori_noise": 45,
     "orien": true,
 
-    "restore_ckpt": null,
+    "restore_ckpt": "/data/test/code/multi-local/kitti/vanilla/cross-vanilla-infer_20250419_194711.pth",
 
     "teacher_ckpt": null,
     "student_ckpt": null,
-    "model": "/data/test/code/multi-local/kitti/vanilla/cross-vanilla-infer_20250419_155156.pth",
+    "model": "/data/test/code/multi-local/kitti/teacher/kitti-distill-210-270_20250420_162809.pth",
     "save_path": "kitti",
     "teacher": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "student": "/data/test/code/multi-local/distillation_model/teacher/best/cross-randomfov180-240_20250120_094602.pth",
@@ -31,15 +31,15 @@
     "epsilon": 1e-7,
     "clip": 1.0,
     "gamma": 0.85 ,
-    "student_temp": 1,
-    "teacher_temp": 1,
+    "student_temp": 0.06,
+    "teacher_temp": 0.06,
     "ema": 0.9,
     "sigma": 4,
     "self_distillation_w": 0.1,
     "start_epoch": 0,
     "dynamic_fov": true,
-    "dynamic_low": 180,
-    "dynamic_high": 240,
+    "dynamic_low": 270,
+    "dynamic_high": 300,
 
 
     "image_size": 512,

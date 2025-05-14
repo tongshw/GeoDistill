@@ -10,9 +10,10 @@ from matplotlib.colors import Normalize
 
 from test_MEA import generate_MAE_mask, generate_batch_mask
 from test_activation import generate_mask, generate_mask_avg
+from test_mask_rec import mask_random_rectangle
 from test_vis_attention import visualize_attention_map
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 # os.environ['WANDB_MODE'] = "offline"
 import time
 
@@ -82,6 +83,14 @@ def train_epoch_distillation(args, teacher, student, train_loader, criterion, op
             for i in range(resized_pano.shape[0]):
                 r = random.uniform(120/360, 180/360)
                 mask = generate_MAE_mask(resized_pano[i].cpu().numpy(), r)
+                mask = torch.from_numpy(mask).to(resized_pano.device)
+                mask = mask.unsqueeze(-1).repeat(1, 1, 3)
+                mask_pano[i] = mask
+                pano[i] = resized_pano[i] * mask
+        elif args.mask_rec:
+            for i in range(resized_pano.shape[0]):
+                r = random.uniform(120/360, 180/360)
+                masked_img, mask = mask_random_rectangle(resized_pano[i].cpu().numpy(), mask_ratio=r)
                 mask = torch.from_numpy(mask).to(resized_pano.device)
                 mask = mask.unsqueeze(-1).repeat(1, 1, 3)
                 mask_pano[i] = mask
@@ -397,10 +406,11 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device, epoch):
         optimizer.zero_grad()
 
         # 前向传播
-        s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, \
-            s_g2s_conf_dict, s_mask1_dict = model(sat, pano1, ones1, None, None, meter_per_pixel)
+        (s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, s_g2s_conf_dict, s_mask1_dict
+         , pano1_conf_dict, pano1_feat_dict) = model(sat, resized_pano, None, None, None, meter_per_pixel)
 
-        corr_maps1 = model.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, s_g2s_conf_dict, s_mask1_dict)
+        corr_maps1 = model.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict
+                                               , s_g2s_feat_dict, s_g2s_conf_dict, None, batch_wise=True)
 
 
         # loss = cross_entropy(student_corr, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
@@ -456,9 +466,9 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device, epoch):
         if i_batch % 25 == 0 and args.visualize:
             if args.save_visualization:
                 save_path1 = f"./vis/distillation/{args.model_name}/train/{epoch}/{sat_gps[0].cpu().numpy()}.png"
-                vis_corr(corr_maps1[2][0], sat[0], pano1[0], gt_points[0], None, save_path1, temp=args.student_temp)
+                vis_corr(corr_maps1[2][0][0], sat[0], resized_pano[0], gt_points[0], None, save_path1, temp=args.student_temp)
             else:
-                vis_corr(corr_maps1[2][0], sat[0], pano1[0], gt_points[0], None, None, temp=args.student_temp)
+                vis_corr(corr_maps1[2][0][0], sat[0], resized_pano[0], gt_points[0], None, None, temp=args.student_temp)
 
     # 返回平均损失
     return total_loss / len(train_loader)
@@ -1053,7 +1063,7 @@ def train(args):
 
         # 训练
         # train_loss = train_epoch(args, model, train_loader, criterion, optimizer, device, epoch)
-        train_loss = train_epoch_supervised(args, model, train_loader, criterion, optimizer, device, epoch)
+        train_loss = train_epoch(args, model, train_loader, criterion, optimizer, device, epoch)
 
         # 验证
 
@@ -1137,12 +1147,12 @@ if __name__ == '__main__':
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-vanilla-infer", help="none")
+    parser.add_argument('--name', default="cross-traindistill_random_initial", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
-    parser.add_argument('--train', default=False)
+    parser.add_argument('--train', default=True)
 
     parser.add_argument('--best_dis', type=float, default=1e8)
 

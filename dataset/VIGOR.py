@@ -31,6 +31,7 @@ class VIGOR(Dataset):
             self.test_city_list = ['NewYork', 'Seattle', 'SanFrancisco', 'Chicago']
         else:
             # original settin is using ['SanFrancisco', 'Chicago'] in test
+            # self.train_city_list = ['NewYork', 'Seattle']
             self.train_city_list = ['NewYork', 'Seattle']
             self.test_city_list = ['SanFrancisco', 'Chicago']
 

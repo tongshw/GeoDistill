@@ -17,6 +17,34 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="shaowen@10.19.138.103:22 password (11)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="shaowen@10.19.138.103:22 password (12)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="shaowen@10.19.138.103:22 password (13)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="shaowen@10.19.138.103:22 password (14)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="shaowen@10.19.138.103:22 password (2)">
         <serverdata>
           <mappings>
@@ -88,6 +116,13 @@
         </serverdata>
       </paths>
       <paths name="test@10.19.138.58:22 password (2)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="test@10.19.138.58:22 password (3)">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />

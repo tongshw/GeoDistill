@@ -8,12 +8,13 @@ import cv2
 import numpy as np
 from matplotlib.colors import Normalize
 
+from model.dino import center_padding
 from test_MEA import generate_MAE_mask, generate_batch_mask
 from test_activation import generate_mask, generate_mask_avg
 from test_mask_rec import mask_random_rectangle
 from test_vis_attention import visualize_attention_map
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 # os.environ['WANDB_MODE'] = "offline"
 import time
 
@@ -75,14 +76,22 @@ def train_epoch_distillation(args, teacher, student, train_loader, criterion, op
                                                                            meter_per_pixel)
         pano = pano1
         mask_pano = ones1
-        if args.mask_activation:
+        if args.mask_fov:
+            pass
+        elif args.mask_activation:
             mask_pano = generate_mask_avg(t_pano1_feat_dict[3], args.mask_ratio)
             mask_pano = mask_pano.permute(0, 2, 3, 1).repeat(1, 1, 1, 3)
             pano = resized_pano * mask_pano
         elif args.mask_MAE:
+            resized_pano = center_padding(resized_pano.permute(0, 3, 1, 2), 14)
+            resized_pano = resized_pano.permute(0, 2, 3, 1)
+            pano = resized_pano
+            mask_pano = torch.ones_like(resized_pano)[:, :, :, :3]
+            imgs = resized_pano.cpu().numpy()
+
             for i in range(resized_pano.shape[0]):
                 r = random.uniform(120/360, 180/360)
-                mask = generate_MAE_mask(resized_pano[i].cpu().numpy(), r)
+                mask = generate_MAE_mask(imgs[i], r, patch_size=14)
                 mask = torch.from_numpy(mask).to(resized_pano.device)
                 mask = mask.unsqueeze(-1).repeat(1, 1, 3)
                 mask_pano[i] = mask
@@ -199,190 +208,6 @@ def train_epoch_distillation(args, teacher, student, train_loader, criterion, op
                 vis_corr(student_corr[2][0], sat[0], pano[0], gt_points[0], None, None, temp=args.student_temp)
                 # vis_corr(student_corr2[2][0], sat[0], pano2[0], gt_points[0], None, None, temp=args.student_temp)
                 vis_corr(teacher_corr[2][0], sat[0], resized_pano[0], gt_points[0], None, None, temp=args.teacher_temp)
-
-    # 返回平均损失
-    return total_loss / len(train_loader)
-
-
-def train_epoch_self_distillation(args, model, train_loader, criterion, optimizer, device, epoch):
-    model.train()
-    total_loss = 0
-
-    # 进度条
-    pbar = tqdm(train_loader, desc='Training')
-
-    for i_batch, data_blob in enumerate(pbar):
-        # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, masked_fov = [
-            x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
-        city = data_blob[-1]
-
-
-        # 清除梯度
-        optimizer.zero_grad()
-
-        # 前向传播
-        sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, g2s2_feat_dict,\
-            g2s2_conf_dict, mask1_dict, mask2_dict = model(sat, resized_pano, ones1, pano1, ones1, meter_per_pixel)
-
-        corr_maps1 = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict,
-                                               mask_dict=None, batch_wise=True)
-        corr_maps2 = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, g2s2_feat_dict, g2s2_conf_dict,
-                                               mask_dict=mask2_dict, batch_wise=False)
-
-        # loss = cross_entropy(student_corr, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
-
-        # 计算损失
-        # cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
-        corr_loss1 = Weakly_supervised_loss_w_GPS_error(corr_maps1, sat_delta[:, 0], sat_delta[:, 1], args.levels,
-                                                        meter_per_pixel)
-        corr1_pos = {}
-        for _, level in enumerate(args.levels):
-            corr = corr_maps1[level]
-            B, _, _, _ = corr.shape
-            pos_corr1 = corr[torch.arange(B), torch.arange(B)]
-            corr1_pos[level] = pos_corr1
-
-        ce_loss = cross_entropy(corr_maps2, corr1_pos, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
-        # corr_loss2 = Weakly_supervised_loss_w_GPS_error(corr_maps2, sat_delta[:, 0], sat_delta[:, 1], args.levels,
-        #                                                 meter_per_pixel)
-        # corr_loss1=0
-        # corr_loss2=0
-
-        # consistency_loss = consistency_constraint_KL_divergency(corr_maps1, corr_maps2, args.levels)
-
-        # loss = corr_loss + args.GPS_error_coe * GPS_loss
-        # loss = args.corr_weight * (corr_loss1 + corr_loss2) + args.consitency_weight * consistency_loss
-
-        if epoch >= args.start_epoch:
-            loss = corr_loss1 + args.self_distillation_w * ce_loss
-        else:
-            loss = corr_loss1
-
-        # 反向传播
-        loss.backward()
-
-        # 梯度裁剪
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-        # 参数更新
-        optimizer.step()
-
-        # 累计损失
-        total_loss += loss.item()
-
-        # 更新进度条
-        pbar.set_postfix({
-            'corr_loss': f'{corr_loss1.item():.4f}',
-            'ce_loss': f'{ce_loss.item():.4f}',
-            # 'consis_loss': f'{consistency_loss.item():.4f}',
-            # 'batch_loss': loss.item(),
-            'avg_loss': f'{total_loss / (i_batch + 1):.4f}'
-        })
-
-        if config['wandb'] and i_batch % 20 == 0:
-            wandb.log({'ce_loss': ce_loss,
-                       'corr1_loss': corr_loss1,
-                       # 'consistency_loss': consistency_loss,
-                       'avg_loss': total_loss / (i_batch + 1),
-                       })
-
-        gt_points = sat_delta * 512 / 4
-        gt_points[:, 0] = 512 / 2 + gt_points[:, 0]
-        gt_points[:, 1] = 512 / 2 + gt_points[:, 1]
-
-        if i_batch % 25 == 0 and args.visualize:
-            if args.save_visualization:
-                save_path1 = f"./vis/distillation/{args.model_name}/train/{epoch}/ori/{sat_gps[0].cpu().numpy()}.png"
-                vis_corr(corr1_pos[2][0], sat[0], resized_pano[0], gt_points[0], None, save_path1, temp=1)
-                save_path2 = f"./vis/distillation/{args.model_name}/train/{epoch}/student/{sat_gps[0].cpu().numpy()}.png"
-                vis_corr(corr_maps2[2][0], sat[0], pano1[0], gt_points[0], None, save_path2, temp=1)
-            else:
-                vis_corr(corr1_pos[2][0], sat[0], pano1[0], gt_points[0], None, None, temp=args.student_temp)
-
-    # 返回平均损失
-    return total_loss / len(train_loader)
-
-def train_epoch_supervised(args, model, train_loader, criterion, optimizer, device, epoch):
-    model.train()
-    total_loss = 0
-
-    # 进度条
-    pbar = tqdm(train_loader, desc='Training')
-
-    for i_batch, data_blob in enumerate(pbar):
-        # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, masked_fov= [
-            x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
-        city = data_blob[-1]
-
-
-        # 清除梯度
-        optimizer.zero_grad()
-
-        # 前向传播
-        s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, \
-            s_g2s_conf_dict, s_mask1_dict, s_pano1_conf_dict, s_pano1_feat_dict = model(sat, pano1, ones1, None, None, meter_per_pixel)
-
-        corr_maps1 = model.calc_corr_for_train(s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, s_g2s_conf_dict, s_mask1_dict)
-
-
-        # loss = cross_entropy(student_corr, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
-
-        # 计算损失
-        # cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
-        teacher_corr = generate_gaussian_heatmap(corr_maps1, args.levels, args.sigma, gt=sat_delta)
-        loss = cross_entropy_fully_supervised(corr_maps1, teacher_corr, args.levels, s_temp=args.student_temp,
-                             t_temp=args.teacher_temp)
-        # corr_loss2 = Weakly_supervised_loss_w_GPS_error(corr_maps2, sat_delta[:, 0], sat_delta[:, 1], args.levels,
-        #                                                 meter_per_pixel)
-        # corr_loss1=0
-        # corr_loss2=0
-
-        # consistency_loss = consistency_constraint_KL_divergency(corr_maps1, corr_maps2, args.levels)
-
-        # loss = corr_loss + args.GPS_error_coe * GPS_loss
-        # loss = args.corr_weight * (corr_loss1 + corr_loss2) + args.consitency_weight * consistency_loss
-
-
-        # 反向传播
-        loss.backward()
-
-        # 梯度裁剪
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-        # 参数更新
-        optimizer.step()
-
-        # 累计损失
-        total_loss += loss.item()
-
-        # 更新进度条
-        pbar.set_postfix({
-            # 'corr_loss': f'{corr_loss1.item() + corr_loss2.item():.4f}',
-            'ce_loss': f'{loss.item():.4f}',
-            # 'consis_loss': f'{consistency_loss.item():.4f}',
-            # 'batch_loss': loss.item(),
-            'avg_loss': f'{total_loss / (i_batch + 1):.4f}'
-        })
-
-        if config['wandb'] and i_batch % 20 == 0:
-            wandb.log({'ce_loss': loss,
-                       # 'corr2_loss': corr_loss2,
-                       # 'consistency_loss': consistency_loss,
-                       'avg_loss': total_loss / (i_batch + 1),
-                       })
-
-        gt_points = sat_delta * 512 / 4
-        gt_points[:, 0] = 512 / 2 + gt_points[:, 0]
-        gt_points[:, 1] = 512 / 2 + gt_points[:, 1]
-
-        if i_batch % 25 == 0 and args.visualize:
-            if args.save_visualization:
-                save_path1 = f"./vis/distillation/{args.model_name}/train/{epoch}/{sat_gps[0].cpu().numpy()}.png"
-                vis_corr(corr_maps1[2][0], sat[0], pano1[0], gt_points, None, save_path1, temp=args.student_temp)
-            else:
-                vis_corr(corr_maps1[2][0], sat[0], pano1[0], gt_points, None, None, temp=args.student_temp)
 
     # 返回平均损失
     return total_loss / len(train_loader)
@@ -514,8 +339,13 @@ def validate(args, model, val_loader, criterion, device, epoch=-1, vis=False, na
             pred_u = (max_index % corr_W - corr_W / 2)
             pred_v = (max_index // corr_W - corr_H / 2)
 
-            pred_u = pred_u * np.power(2, 3 - max_level) * meter_per_pixel
-            pred_v = pred_v * np.power(2, 3 - max_level) * meter_per_pixel
+            _, _, feat_H, feat_W = sat_feat_dict[max_level].shape
+
+            # pred_u = pred_u * np.power(2, 3 - max_level) * meter_per_pixel
+            # pred_v = pred_v * np.power(2, 3 - max_level) * meter_per_pixel
+
+            pred_u = pred_u * 512/feat_H * meter_per_pixel
+            pred_v = pred_v * 512/feat_H * meter_per_pixel
 
             pred_us.append(pred_u.data.cpu().numpy())
             pred_vs.append(pred_v.data.cpu().numpy())
@@ -911,7 +741,7 @@ def train_distillation(args):
             student.load_state_dict(checkpoint['model_state_dict'])
             # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             # scheduler.load_state_dict(checkpoint['lr_schedule'])
-            print_colored("Have load state_dict from: {}".format(args.restore_ckpt))
+            print_colored("Have load state_dict from: {}".format(PATH))
     elif args.student_ckpt is not None:
         PATH = args.student_ckpt  # 'checkpoints/best_checkpoint.pth'
         if os.path.isfile(PATH):
@@ -920,7 +750,7 @@ def train_distillation(args):
             student.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             # scheduler.load_state_dict(checkpoint['lr_schedule'])
-            print_colored("Have load state_dict from: {}".format(args.restore_ckpt))
+            print_colored("Have load state_dict from: {}".format(PATH))
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
@@ -937,7 +767,7 @@ def train_distillation(args):
             teacher.load_state_dict(checkpoint['model_state_dict'])
             # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             # scheduler.load_state_dict(checkpoint['lr_schedule'])
-            print_colored("Have load state_dict from: {}".format(args.restore_ckpt))
+            print_colored("Have load state_dict from: {}".format(PATH))
 
     for param in teacher.parameters():
         param.requires_grad = False
@@ -1143,11 +973,11 @@ if __name__ == '__main__':
     parser.add_argument('--start_step', type=int, default=0)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
-    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--epochs', type=int, default=1)
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-traindistill_random_initial", help="none")
+    parser.add_argument('--name', default="cross-dino-g2sweakly_distill_maeb_patch14", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',

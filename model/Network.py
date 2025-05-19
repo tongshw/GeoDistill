@@ -18,9 +18,10 @@ import torchvision.transforms.functional as TF
 
 from test_activation import generate_mask
 from test_vis_attention import visualize_attention_map
-from utils.pca import pcl_features_to_RGB
-from utils.util import grid_sample, visualize_feature_map_pca, visualize_feature_map
+from utils.util import grid_sample
 
+from .dino import DINO
+from .dpt import DPT
 
 class LocalizationNet(nn.Module):
     def __init__(self, args, grid_size=8):
@@ -30,8 +31,12 @@ class LocalizationNet(nn.Module):
         self.channels = args.channels
 
         input_dim = 3
-        self.sat_VGG = VGGUnet(self.levels, self.channels)
-        self.grd_VGG = VGGUnet(self.levels, self.channels) if args.p_siamese else None
+        # self.sat_VGG = VGGUnet(self.levels, self.channels)
+        # self.grd_VGG = VGGUnet(self.levels, self.channels) if args.p_siamese else None
+        self.SatEnc = DINO()
+        self.SatDec = DPT()
+        self.GrdEnc = DINO()
+        self.GrdDec = DPT()
 
         feature_dim = 320
         self.rotation_range = 0
@@ -221,8 +226,14 @@ class LocalizationNet(nn.Module):
 
         pano1_img = pano1_img.permute(0, 3, 1, 2)
 
-        sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
-        pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
+        # sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
+        # pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
+
+        sat_feat_list = self.SatEnc(sat_img)
+        sat_feat_dict = self.SatDec(sat_feat_list)
+
+        pano1_feat_list = self.GrdEnc(pano1_img)
+        pano1_feat_dict = self.GrdDec(pano1_feat_list)
 
         # visualize_feature_map_pca(pano1_feat_dict[3].detach().cpu())
         # pcl_features_to_RGB(pano1_feat_dict[3].detach().cpu())
@@ -251,8 +262,10 @@ class LocalizationNet(nn.Module):
         g2s1_feat_dict = {}
         g2s1_conf_dict = {}
         mask1_dict = {}
+        pano1_conf_dict = {}
+        sat_conf_dict = {}
         # corr_maps = {}
-        B = sat_conf_dict[0].shape[0]
+        B = sat_feat_dict[0].shape[0]
 
         shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
         shift_v = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
@@ -263,7 +276,7 @@ class LocalizationNet(nn.Module):
         for _, level in enumerate(self.levels):
             sat_feat = sat_feat_dict[level]
             pano1_feat = pano1_feat_dict[level]
-            pano1_conf = pano1_conf_dict[level]
+            pano1_conf = torch.ones_like(pano1_feat)
 
             B, c, h, w = pano1_feat.shape
             A = sat_feat.shape[-1]
@@ -294,6 +307,7 @@ class LocalizationNet(nn.Module):
 
             g2s1_feat_dict[level] = g2s1_feat
             g2s1_conf_dict[level] = g2s1_conf
+            sat_conf_dict[level] = g2s1_conf
 
         return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, mask1_dict, pano1_conf_dict, pano1_feat_dict
 
@@ -311,7 +325,7 @@ class LocalizationNet(nn.Module):
             sat_feat = sat_feat_dict[level]
             # sat_conf = sat_conf_dict[level]
             bev_feat = bev_feat_dict[level]
-            bev_conf = bev_conf_dict[level]
+            bev_conf = torch.ones_like(bev_feat)[:, :1, :, :]
             if mask_dict is not None:
                 mask = mask_dict[level]
 
@@ -381,7 +395,7 @@ class LocalizationNet(nn.Module):
         sat_feat = sat_feat_dict[level]
         sat_conf = sat_conf_dict[level]
         bev_feat = bev_feat_dict[level]
-        bev_conf = bev_conf_dict[level]
+        bev_conf = torch.ones_like(bev_feat)[:, :1, :, :]
         mask = None
         if mask_dict is not None:
             mask = mask_dict[level]

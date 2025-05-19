@@ -18,12 +18,12 @@
     "ori_noise": 45,
     "orien": true,
 
-    "restore_ckpt": null,
+    "restore_ckpt": "/data/test/code/geodistill_vit/kitti/student/cross-dino-g2sweakly_20250516_232256.pth",
     "restore_ckpt3": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "restore_ckpt1": "/data/test/code/multi-local/location_model/same-corrw100_20241223_185200.pth",
     "teacher_ckpt": null,
     "student_ckpt": null,
-    "model": "/data/test/code/multi-local/kitti/teacher/cross-traindistill_on_NY_20250513_071447.pth",
+    "model": "/data/test/code/geodistill_vit/kitti/student/cross-dino-g2sweakly_distill_mae14_20250517_125048.pth",
     "model2": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "model1": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "save_path": "kitti",
@@ -67,9 +67,10 @@
     "save_visualization": true,
     "wandb": true,
 
+    "mask_fov": false,
     "mask_activation": false,
     "mask_ratio": 0.2,
-    "mask_MAE": false,
+    "mask_MAE": true,
     "MAE_ratio": 0.55,
     "mask_rec": false,
 

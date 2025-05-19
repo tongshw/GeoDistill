@@ -34,6 +34,8 @@ class VIGOR(Dataset):
             # self.train_city_list = ['NewYork', 'Seattle']
             self.train_city_list = ['NewYork', 'Seattle']
             self.test_city_list = ['SanFrancisco', 'Chicago']
+            # self.train_city_list = ['Seattle']
+            # self.test_city_list = ['Chicago']
 
         pano_list = []
         pano_label = []
@@ -279,6 +281,50 @@ class DistanceBatchSampler:
             return len(self.sampler) // self.batch_size
         else:
             return (len(self.sampler) + self.batch_size - 1) // self.batch_size
+
+
+# def fetch_dataloader(args, vigor=None, split='train'):
+#     if vigor is None:
+#         vigor = VIGOR(args, split)
+#
+#     print('Total available image pairs: %d' % len(vigor))
+#
+#     if split == 'train':
+#         # 随机打乱索引并取一半数据
+#         total_indices = np.arange(len(vigor))
+#         np.random.shuffle(total_indices)
+#         sampled_indices = total_indices[:len(total_indices) // 4]
+#         sampled_vigor = Subset(vigor, sampled_indices)
+#
+#         print('Randomly selected %d image pairs for training/validation.' % len(sampled_vigor))
+#
+#         # 再划分训练和验证集（80%训练，20%验证）
+#         index_list = np.arange(len(sampled_vigor))
+#         train_indices = index_list[:int(len(index_list) * 0.8)]
+#         val_indices = index_list[int(len(index_list) * 0.8):]
+#         training_set = Subset(sampled_vigor, train_indices)
+#         val_set = Subset(sampled_vigor, val_indices)
+#
+#         if not isinstance(vigor.pano_label, np.ndarray):
+#             vigor.pano_label = np.array(vigor.pano_label)
+#
+#         # 获取被采样数据的 pano_label
+#         sampled_pano_label = vigor.pano_label[np.array(sampled_indices, dtype=int)]
+#         train_pano_label = sampled_pano_label[train_indices]
+#
+#         train_bs = DistanceBatchSampler(torch.utils.data.RandomSampler(training_set), args.batch_size, True, train_pano_label)
+#         train_dataloader = DataLoader(training_set, batch_sampler=train_bs, num_workers=8)
+#         val_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=8)
+#
+#         print("Using {} images for training, {} images for validation.".format(len(training_set), len(val_set)))
+#         return train_dataloader, val_dataloader
+#
+#     else:
+#         nw = min([os.cpu_count(), args.batch_size if args.batch_size > 1 else 0, 8])  # number of workers
+#         print('Using {} dataloader workers every process'.format(nw))
+#         test_loader = DataLoader(vigor, batch_size=16,
+#                                  pin_memory=True, shuffle=False, num_workers=nw, drop_last=False)
+#         return test_loader
 
 
 def fetch_dataloader(args, vigor=None, split='train'):

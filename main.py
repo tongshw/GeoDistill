@@ -14,8 +14,8 @@ from test_activation import generate_mask, generate_mask_avg
 from test_mask_rec import mask_random_rectangle
 from test_vis_attention import visualize_attention_map
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
-# os.environ['WANDB_MODE'] = "offline"
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['WANDB_MODE'] = "offline"
 import time
 
 import torch
@@ -973,16 +973,16 @@ if __name__ == '__main__':
     parser.add_argument('--start_step', type=int, default=0)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
-    parser.add_argument('--epochs', type=int, default=1)
+    parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-dino-g2sweakly_distill_maeb_patch14", help="none")
+    parser.add_argument('--name', default="cross-g2s-woNY-infer", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
-    parser.add_argument('--train', default=True)
+    parser.add_argument('--train', default=False)
 
     parser.add_argument('--best_dis', type=float, default=1e8)
 
@@ -1022,12 +1022,11 @@ if __name__ == '__main__':
     if config.dataset == 'vigor':
         print("Dataset is VIGOR!")
     if args.train:
-        train_distillation(config)
-        # train(config)
+        # train_distillation(config)
+        train(config)
     else:
         # pass
         test(config)
-        # vis_distillation_err(config)
         # config['model'] = "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w50_20241221_194330.pth"
         # test(config)
 

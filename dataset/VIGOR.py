@@ -26,16 +26,16 @@ class VIGOR(Dataset):
 
         label_root = 'splits__corrected'  # 'splits' splits__corrected
         if same_area:
-            self.train_city_list = ['NewYork', 'Seattle', 'SanFrancisco',
+            self.train_city_list = ['Seattle', 'SanFrancisco',
                                     'Chicago']  # ['NewYork', 'Seattle', 'SanFrancisco', 'Chicago'] ['Seattle']
-            self.test_city_list = ['NewYork', 'Seattle', 'SanFrancisco', 'Chicago']
+            self.test_city_list = ['Seattle', 'SanFrancisco', 'Chicago']
         else:
             # original settin is using ['SanFrancisco', 'Chicago'] in test
             # self.train_city_list = ['NewYork', 'Seattle']
-            self.train_city_list = ['NewYork', 'Seattle']
+            # self.train_city_list = ['SanFrancisco', 'Chicago']
+            # self.test_city_list = ['NewYork', 'Seattle']
+            self.train_city_list = ['Seattle']
             self.test_city_list = ['SanFrancisco', 'Chicago']
-            # self.train_city_list = ['Seattle']
-            # self.test_city_list = ['Chicago']
 
         pano_list = []
         pano_label = []

@@ -16,8 +16,6 @@ from torchvision import transforms
 from VGG import VGGUnet
 import torchvision.transforms.functional as TF
 
-from test_activation import generate_mask
-from test_vis_attention import visualize_attention_map
 from utils.util import grid_sample
 
 from .dino import DINO
@@ -33,10 +31,8 @@ class LocalizationNet(nn.Module):
         input_dim = 3
         # self.sat_VGG = VGGUnet(self.levels, self.channels)
         # self.grd_VGG = VGGUnet(self.levels, self.channels) if args.p_siamese else None
-        self.SatEnc = DINO()
-        self.SatDec = DPT()
-        self.GrdEnc = DINO()
-        self.GrdDec = DPT()
+        self.SatDPT = DPT()
+        self.GrdDPT = DPT()
 
         feature_dim = 320
         self.rotation_range = 0
@@ -102,111 +98,8 @@ class LocalizationNet(nn.Module):
             grd_c_trans = None
         return grd_f_trans, grd_c_trans, uv
 
-    def forward_2grd(self, sat_img, pano1, ones1, pano2, ones2, meter_per_pixel):
-
-        sat_img = 2 * (sat_img / 255.0) - 1.0
-        pano1_img = 2 * (pano1 / 255.0) - 1.0
-        pano2_img = 2 * (pano2 / 255.0) - 1.0
-        # sat_img = sat_img / 255.0
-        # pano1_img = pano1 / 255.0
-        # pano2_img = pano2 / 255.0
-
-        sat_img = sat_img.contiguous()
-        pano1_img = pano1_img.contiguous()
-        pano2_img = pano2_img.contiguous()
-
-        pano1_img = pano1_img.permute(0, 3, 1, 2)
-        pano2_img = pano2_img.permute(0, 3, 1, 2)
-        pano1_zero = torch.sum(pano1_img == 0).item()
-
-        sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
-        pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
-        # pano2_feat_dict, pano2_conf_dict = self.grd_VGG(pano2_img)
-
-        feat1_zero = torch.sum(pano1_feat_dict[0] == 0).item()
-        conf1_zero = torch.sum(pano1_conf_dict[0] == 0).item()
-
-        g2s1_feat_dict = {}
-        g2s1_conf_dict = {}
-        g2s2_feat_dict = {}
-        g2s2_conf_dict = {}
-        mask1_dict = {}
-        mask2_dict = {}
-        # corr_maps = {}
-        B = sat_conf_dict[0].shape[0]
-
-        shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        shift_v = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        mask1 = None
-        mask2 = None
-        ones1 = ones1.cpu().numpy()
-        ones2 = ones2.cpu().numpy()
-
-        for _, level in enumerate(self.levels):
-            sat_feat = sat_feat_dict[level]
-            pano1_feat = pano1_feat_dict[level]
-            pano1_conf = pano1_conf_dict[level]
-            pano2_feat = pano1_feat_dict[level].clone()
-            pano2_conf = pano1_conf_dict[level].clone()
-
-            B, c, h, w = pano2_feat.shape
-
-            resized_batch1 = []
-            resized_batch2 = []
-
-            for i in range(B):  # 遍历 batch
-                resized_image1 = cv2.resize(ones1[i], (w, h), interpolation=cv2.INTER_LINEAR)
-                resized_image2 = cv2.resize(ones2[i], (w, h), interpolation=cv2.INTER_LINEAR)
-                resized_batch1.append(resized_image1)
-                resized_batch2.append(resized_image2)
-
-            # 将结果转回 NumPy 数组，然后再转回 PyTorch 张量
-            resized_batch1 = np.stack(resized_batch1)  # 将所有图片拼接成一个数组
-            mask1 = torch.from_numpy(resized_batch1)
-            mask1 = mask1.to(sat_feat.device).permute(0, 3, 1, 2)
-
-            resized_batch2 = np.stack(resized_batch2)  # 将所有图片拼接成一个数组
-            mask2 = torch.from_numpy(resized_batch2)
-            mask2 = mask2.to(sat_feat.device).permute(0, 3, 1, 2)
-
-            # ones1 = cv2.resize(ones1, (w, h))
-            # ones2 = cv2.resize(ones2, (w, h))
-
-            grd1_feat_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
-                pano1_feat, pano1_conf, None, shift_u, shift_v, level, meter_per_pixel)
-
-            grd2_feat_proj, grd2_conf_proj, grd_uv = self.project_grd_to_map(
-                pano2_feat, pano2_conf, None, shift_u, shift_v, level, meter_per_pixel)
-
-            mask1_proj, _, grd_uv = self.project_grd_to_map(
-                mask1, pano1_conf, None, shift_u, shift_v, level, meter_per_pixel)
-            mask2_proj, _, grd_uv = self.project_grd_to_map(
-                mask2, pano2_conf, None, shift_u, shift_v, level, meter_per_pixel)
-
-            A = sat_feat.shape[-1]
-            crop_H = int(A * 0.4)
-            crop_W = int(A * 0.4)
-            g2s1_feat = TF.center_crop(grd1_feat_proj, [crop_H, crop_W])
-            g2s1_conf = TF.center_crop(grd1_conf_proj, [crop_H, crop_W])
-            mask1 = TF.center_crop(mask1_proj, [crop_H, crop_W])
-            mask1_dict[level] = mask1
-
-            g2s2_feat = TF.center_crop(grd2_feat_proj, [crop_H, crop_W])
-            g2s2_conf = TF.center_crop(grd2_conf_proj, [crop_H, crop_W])
-            mask2 = TF.center_crop(mask2_proj, [crop_H, crop_W])
-            mask2_dict[level] = mask2
-
-            g2s1_feat_dict[level] = g2s1_feat
-            g2s1_conf_dict[level] = g2s1_conf
-
-            g2s2_feat_dict[level] = g2s2_feat
-            g2s2_conf_dict[level] = g2s2_conf
-
-        return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, g2s2_feat_dict, g2s2_conf_dict, mask1_dict, mask2_dict, \
-            pano1_conf_dict, pano1_conf_dict
-
-    def forward_1grd(self, sat_img, pano1, ones1, meter_per_pixel):
-        B = sat_img.shape[0]
+    def forward(self, sat_feat_list, pano_feat_list, meter_per_pixel, mask=None):
+        B = sat_feat_list[0].shape[0]
         # shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
         # shift_v = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
         # grd1_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
@@ -215,110 +108,62 @@ class LocalizationNet(nn.Module):
         # plt.imshow(grd1_proj[1].permute(1, 2, 0).cpu().detach().numpy().astype(np.uint8))
         # plt.show()
 
-        sat_img = 2 * (sat_img / 255.0) - 1.0
-        pano1_img = 2 * (pano1 / 255.0) - 1.0
+        sat_feat_dict = self.SatDPT(sat_feat_list)
 
-        # sat_img = sat_img / 255.0
-        # pano1_img = pano1 / 255.0
+        pano_feat_dict = self.GrdDPT(pano_feat_list)
 
-        sat_img = sat_img.contiguous()
-        pano1_img = pano1_img.contiguous()
-
-        pano1_img = pano1_img.permute(0, 3, 1, 2)
-
-        # sat_feat_dict, sat_conf_dict = self.sat_VGG(sat_img)
-        # pano1_feat_dict, pano1_conf_dict = self.grd_VGG(pano1_img)
-
-        sat_feat_list = self.SatEnc(sat_img)
-        sat_feat_dict = self.SatDec(sat_feat_list)
-
-        pano1_feat_list = self.GrdEnc(pano1_img)
-        pano1_feat_dict = self.GrdDec(pano1_feat_list)
-
-        # visualize_feature_map_pca(pano1_feat_dict[3].detach().cpu())
-        # pcl_features_to_RGB(pano1_feat_dict[3].detach().cpu())
-        # visualize_feature_map(pano1_feat_dict[3].detach().cpu(), ((pano1_img+1)/2).detach().cpu())
-        # visualize_feature_map(sat_feat_dict[3].detach().cpu(), ((sat_img + 1) / 2).detach().cpu())
-        # visualize_feature_map_pca(sat_feat_dict[3].detach().cpu())
-        # pcl_features_to_RGB(sat_feat_dict[3].detach().cpu())
-        # batch_size, channel, height, width = pano1_feat_dict[3].shape
-
-        # 计算每个位置的L2范数
-        # l2_norms_pano = torch.norm(pano1_feat_dict[3], p=2, dim=1, keepdim=True)
-        # l2_norms_sat = torch.norm(sat_feat_dict[3], p=2, dim=1, keepdim=True)
-        # mask_pano = generate_mask(pano1_feat_dict[3], 0.2)
-        #
-        # # 对L2范数进行归一化
-        # attention_map_pano = (l2_norms_pano - l2_norms_pano.min()) / (l2_norms_pano.max() - l2_norms_pano.min())
-        # attention_map_sat = (l2_norms_sat - l2_norms_sat.min()) / (l2_norms_sat.max() - l2_norms_sat.min())
-        # pano = (((pano1_img[0] + 1)/2 * 255) * mask_pano[0]).permute(1, 2, 0).cpu().numpy()
-        #
-        # visualize_attention_map(attention_map_pano[0].cpu().numpy(), attention_map_sat[0].cpu().numpy(),
-        #                         pano,
-        #                         ((sat_img[0] + 1)/2 * 255).permute(1, 2, 0).cpu().numpy())
-
-
-
-        g2s1_feat_dict = {}
-        g2s1_conf_dict = {}
-        mask1_dict = {}
-        pano1_conf_dict = {}
+        g2s_feat_dict = {}
+        g2s_conf_dict = {}
+        mask_dict = {}
+        pano_conf_dict = {}
         sat_conf_dict = {}
         # corr_maps = {}
         B = sat_feat_dict[0].shape[0]
 
-        shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        shift_v = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        mask1 = None
-        if ones1 is not None:
-            ones1 = ones1.cpu().numpy()
+        shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_feat_dict[0].device)
+        shift_v = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_feat_dict[0].device)
+        if mask is not None:
+            mask = mask.cpu().numpy()
 
         for _, level in enumerate(self.levels):
             sat_feat = sat_feat_dict[level]
-            pano1_feat = pano1_feat_dict[level]
-            pano1_conf = torch.ones_like(pano1_feat)
+            pano_feat = pano_feat_dict[level]
+            pano_conf = torch.ones_like(pano_feat)
 
-            B, c, h, w = pano1_feat.shape
+            B, c, h, w = pano_feat.shape
             A = sat_feat.shape[-1]
             crop_H = int(A * 0.4)
             crop_W = int(A * 0.4)
 
-            if ones1 is not None:
-                resized_batch1 = []
+            if mask is not None:
+                resized_mask_batch = []
 
                 for i in range(B):  # 遍历 batch
-                    resized_image1 = cv2.resize(ones1[i], (w, h), interpolation=cv2.INTER_LINEAR)
-                    resized_batch1.append(resized_image1)
+                    resized_mask = cv2.resize(mask[i], (w, h), interpolation=cv2.INTER_LINEAR)
+                    resized_mask_batch.append(resized_mask)
 
                 # 将结果转回 NumPy 数组，然后再转回 PyTorch 张量
-                resized_batch1 = np.stack(resized_batch1)  # 将所有图片拼接成一个数组
-                mask1 = torch.from_numpy(resized_batch1)
-                mask1 = mask1.to(sat_feat.device).permute(0, 3, 1, 2)
-                mask1_proj, _, grd_uv = self.project_grd_to_map(
-                    mask1, pano1_conf, None, shift_u, shift_v, level, meter_per_pixel)
-                mask1 = TF.center_crop(mask1_proj, [crop_H, crop_W])
-                mask1_dict[level] = mask1
+                resized_mask_batch = np.stack(resized_mask_batch)  # 将所有图片拼接成一个数组
+                mask_ = torch.from_numpy(resized_mask_batch)
+                mask_ = mask_.to(sat_feat.device).permute(0, 3, 1, 2)
+                mask_proj, _, grd_uv = self.project_grd_to_map(
+                    mask_, pano_conf, None, shift_u, shift_v, level, meter_per_pixel)
+                mask_ = TF.center_crop(mask_proj, [crop_H, crop_W])
+                mask_dict[level] = mask_
 
-            grd1_feat_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
-                pano1_feat, pano1_conf, None, shift_u, shift_v, level, meter_per_pixel)
+            grd_feat_proj, grd_conf_proj, grd_uv = self.project_grd_to_map(
+                pano_feat, pano_conf, None, shift_u, shift_v, level, meter_per_pixel)
 
-            g2s1_feat = TF.center_crop(grd1_feat_proj, [crop_H, crop_W])
-            g2s1_conf = TF.center_crop(grd1_conf_proj, [crop_H, crop_W])
+            g2s_feat = TF.center_crop(grd_feat_proj, [crop_H, crop_W])
+            g2s_conf = TF.center_crop(grd_conf_proj, [crop_H, crop_W])
 
-            g2s1_feat_dict[level] = g2s1_feat
-            g2s1_conf_dict[level] = g2s1_conf
-            sat_conf_dict[level] = g2s1_conf
+            g2s_feat_dict[level] = g2s_feat
+            g2s_conf_dict[level] = g2s_conf
+            sat_conf_dict[level] = g2s_conf
 
-        return sat_feat_dict, sat_conf_dict, g2s1_feat_dict, g2s1_conf_dict, mask1_dict, pano1_conf_dict, pano1_feat_dict
+        return sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, mask_dict, pano_conf_dict, pano_feat_dict
 
-    def forward(self, sat_img, pano1, ones1, pano2, ones2, meter_per_pixel):
-        if pano2 is not None:
-            return self.forward_2grd(sat_img, pano1, ones1, pano2, ones2, meter_per_pixel)
-        else:
-            return self.forward_1grd(sat_img, pano1, ones1, meter_per_pixel)
-
-    def calc_corr_for_train(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask_dict=None,
-                            batch_wise=False):
+    def calc_corr_for_train(self, sat_feat_dict, bev_feat_dict, mask_dict=None,batch_wise=False):
         corr_maps = {}
 
         for _, level in enumerate(self.levels):

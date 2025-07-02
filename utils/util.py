@@ -623,3 +623,83 @@ def visualize_feature_map(feature_map, original_image=None, save_path=None):
     plt.show()
 
     return attention_map
+
+
+
+def generate_MAE_mask(image, mask_ratio=0.75, patch_size=16):
+    """
+    生成与输入图片形状相同的mask，随机将部分16x16区域置0（覆盖75%面积），其余置1。
+
+    参数：
+    image: numpy数组，输入图片，形状为(H, W)或(H, W, C)。
+    mask_ratio: float，需覆盖的面积比例，默认为0.75。
+    patch_size: int，每个区域的大小，默认为16。
+
+    返回：
+    mask: numpy数组，与image形状相同的0-1矩阵。
+    """
+    h, w = image.shape[:2]
+    target_area = mask_ratio * h * w  # 计算需要覆盖的总面积
+
+    # 生成所有可能的块
+    blocks = []
+    for i in range(0, h, patch_size):
+        for j in range(0, w, patch_size):
+            y_end = min(i + patch_size, h)
+            x_end = min(j + patch_size, w)
+            block_area = (y_end - i) * (x_end - j)
+            blocks.append((i, j, y_end, x_end, block_area))
+
+    # 随机打乱块顺序
+    np.random.shuffle(blocks)
+
+    # 选择块直到覆盖足够面积
+    masked_area = 0
+    selected_blocks = []
+    for block in blocks:
+        if masked_area >= target_area:
+            break
+        selected_blocks.append(block)
+        masked_area += block[4]
+
+    # 创建全1的mask
+    mask = np.ones((h, w), dtype=np.uint8)
+
+    # 将选中的块置0
+    for y_start, x_start, y_end, x_end, _ in selected_blocks:
+        mask[y_start:y_end, x_start:x_end] = 0
+
+    # 扩展mask维度以匹配输入图片的形状（若为多通道）
+    # if len(image.shape) == 3:
+    #     mask = mask[:, :, np.newaxis].repeat(image.shape[2], axis=2)
+
+    return mask
+
+
+
+def generate_mask_avg(feature_map, r):
+    """
+    生成一个只包含0和1的mask,值为1的元素个数/所有元素比例为r。
+
+    参数:
+    feature_map (torch.Tensor): 输入的feature map, shape为(batch, channel, height, width)
+    r (float): 需要保留的比例, 范围为(0, 1)
+
+    返回:
+    mask (torch.Tensor): 生成的mask, shape为(batch, 1, height, width)
+    """
+    batch_size, channel, height, width = feature_map.shape
+
+    # 对通道维度进行平均池化 (使用均值池化)
+    avg_pool = feature_map.mean(dim=1, keepdim=True)
+
+    # 将池化后的结果按升序排序
+    flat_avg_pool = avg_pool.view(batch_size, -1)  # 展平为(batch, height * width)
+    k = int(r * height * width)
+    _, indices = torch.topk(flat_avg_pool, k, dim=1, largest=True)
+
+    # 生成 mask
+    mask = torch.ones_like(avg_pool)
+    mask.view(batch_size, -1).scatter_(1, indices, 0)
+
+    return mask

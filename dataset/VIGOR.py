@@ -11,12 +11,9 @@ import numpy as np
 
 class VIGOR(Dataset):
     def __init__(self, args, split='train', root='/data/dataset/VIGOR', same_area=True):
-        # usr = os.getcwd().split('/')[2]
-        # root = os.path.join('/home',usr,root)
         same_area = not args.cross_area
 
         self.image_size = args.image_size
-        # self.start_angle = args.start_angle
         self.fov_size = args.fov_size
         self.bev_size = args.bev_size
         self.fov_decay = args.fov_decay
@@ -26,15 +23,10 @@ class VIGOR(Dataset):
 
         label_root = 'splits__corrected'  # 'splits' splits__corrected
         if same_area:
-            self.train_city_list = ['Seattle', 'SanFrancisco',
-                                    'Chicago']  # ['NewYork', 'Seattle', 'SanFrancisco', 'Chicago'] ['Seattle']
-            self.test_city_list = ['Seattle', 'SanFrancisco', 'Chicago']
+            self.train_city_list = ['NewYork', 'Seattle', 'SanFrancisco', 'Chicago']
+            self.test_city_list = ['NewYork', 'Seattle', 'SanFrancisco', 'Chicago']
         else:
-            # original settin is using ['SanFrancisco', 'Chicago'] in test
-            # self.train_city_list = ['NewYork', 'Seattle']
-            # self.train_city_list = ['SanFrancisco', 'Chicago']
-            # self.test_city_list = ['NewYork', 'Seattle']
-            self.train_city_list = ['Seattle']
+            self.train_city_list = ['NewYork', 'Seattle']
             self.test_city_list = ['SanFrancisco', 'Chicago']
 
         pano_list = []
@@ -84,11 +76,7 @@ class VIGOR(Dataset):
                                      'Chicago': 0.111262 * 640 / 512}
 
         self.split = split
-        # self.transform = train_transform(0) if 'augment' in args and args.augment else None
-        # self.transform = None
-        # self.center = [(self.image_size / 2, self.image_size / 2),
-        #                (self.image_size / 2, self.image_size / 2 - self.image_size / 8)] \
-        #     if 'orien' in args and args.orien else [(self.image_size // 2.0, self.image_size // 2.0), ]
+
         pona_path = self.pano_list[0]
         pona = cv2.imread(pona_path, 1)[:, :, ::-1]  # BGR ==> RGB
         self.out = get_BEV_projection(pona, self.image_size, self.image_size, Fov=85 * 2, dty=0, dy=0)
@@ -121,23 +109,6 @@ class VIGOR(Dataset):
         resized_pano = cv2.resize(pano, (640, 320))
         h, w, c = resized_pano.shape
 
-        # start_angle1 = np.random.randint(0, self.fov_size)
-        # w_start1 = int(np.round(w / 360 * start_angle1))
-        # w_end1 = int(np.round(w / 360 * (start_angle1 + 360 - self.fov_size)))
-        #
-        # if start_angle1 > self.masked_fov:
-        #     if (start_angle1 + self.masked_fov * 2) < 360:
-        #         valid_range = list(range(0, start_angle1 - self.masked_fov)) + list(range(start_angle1 + self.masked_fov, 360 - self.masked_fov))
-        #     else:
-        #         valid_range = list(range(0, start_angle1 - self.masked_fov))
-        # else:
-        #     valid_range = list(range(start_angle1 + self.masked_fov, 360 - self.masked_fov))
-        #
-        # start_angle2 = np.random.choice(valid_range)
-        #
-        # w_start2 = int(np.floor(w / 360 * start_angle2))
-        # w_end2 = int(np.floor(w / 360 * (start_angle2 + 360 - self.fov_size)))
-
         if self.dynamic_fov:
             masked_fov = 360 - np.random.randint(self.dynamic_low, self.dynamic_high)
         else:
@@ -147,39 +118,18 @@ class VIGOR(Dataset):
         w_start1 = int(np.round(w / 360 * start_angle1))
         w_end1 = int(np.round(w / 360 * (start_angle1 + masked_fov)))
 
-        # 创建两个 mask，并应用到原图像上
-        mask1 = np.zeros_like(resized_pano)
-        mask2 = np.zeros_like(resized_pano)
+
+        # =================== get mask and masked pano ===================================
+        zeros = np.zeros_like(resized_pano)
         pano1 = resized_pano.copy()
-        pano2 = resized_pano.copy()
-        ones1 = np.ones_like(resized_pano)
-        ones2 = np.ones_like(resized_pano)
+        mask = np.ones_like(resized_pano)
 
-        pano1[:, w_start1:w_end1, :] = mask1[:, w_start1:w_end1, :]
-        # pano2[:, w_start2:w_end2, :] = mask2[:, w_start2:w_end2, :]
-        ones1[:, w_start1:w_end1, :] = mask1[:, w_start1:w_end1, :]
-        # ones2[:, w_start2:w_end2, :] = mask2[:, w_start2:w_end2, :]
-        ones2 = ones2 - ones1
-        pano2 = pano2 * ones2
+        pano1[:, w_start1:w_end1, :] = zeros[:, w_start1:w_end1, :]
+        masked_pano = pano1
+        mask[:, w_start1:w_end1, :] = zeros[:, w_start1:w_end1, :]
 
-        # =================== get masked pano ===================================
-        # mask = np.zeros_like(pano)
-        # h, w, c = pano.shape
-        # start_angle = np.random.randint(0, 360-self.fov_size)
-        # # start_angle = 0
-        # w_start, w_end = w / 360 * start_angle, w / 360 * (start_angle + self.fov_size)
-        # w_start = int(np.round(w_start))
-        # w_end = int(np.round(w_end))
-        # mask[:, w_start:w_end, :] = pano[:, w_start:w_end, :]
-        # pano = mask
-
-        # rotation_range = self.ori_noise
-        # random_ori = np.random.uniform(-1, 1) * rotation_range / 360
-        # ori_angle = random_ori * 360
-        # pano = np.roll(pano, int(random_ori * pano.shape[1]), axis=1)
 
         pano_bev = get_BEV_tensor(pano, 500, 500, dty=0, dy=0, out=self.out).numpy().astype(np.uint8)
-        # pano_bev = cv2.resize(pano_bev, (patch_size, patch_size))
         pano_bev = cv2.resize(pano_bev, (self.bev_size, self.bev_size))
         bev = torch.from_numpy(pano_bev).float().permute(2, 0, 1)
 
@@ -198,12 +148,6 @@ class VIGOR(Dataset):
         gt_shift_x = -sat_delta_init2[1] / 512 * 4  #
         sat_delta = [gt_shift_x, gt_shift_y]
 
-        # plt.figure(figsize=(20, 10))  # 设置图大小
-        # plt.imshow(pano1)
-        # plt.title(f"pano 1")
-        # plt.axis("on")  # 关闭坐标轴
-        # plt.show()
-
         city = ""
         if 'NewYork' in pano_path:
             city = 'NewYork'
@@ -214,10 +158,9 @@ class VIGOR(Dataset):
         elif 'Chicago' in pano_path:
             city = 'Chicago'
 
-        # return img1, img2, pano_gps, sat_gps, torch.tensor(ori_angle), sat_delta
         return bev, sat, pano_gps, sat_gps, torch.tensor(sat_delta, dtype=torch.float32), torch.tensor(
             self.meter_per_pixel_dict[city], dtype=torch.float32), \
-            pano1, ones1, pano2, ones2, resized_pano, city, torch.tensor(masked_fov, dtype=torch.float32)
+            masked_pano, mask, resized_pano, city, torch.tensor(masked_fov, dtype=torch.float32)
 
 
 class DistanceBatchSampler:
@@ -281,50 +224,6 @@ class DistanceBatchSampler:
             return len(self.sampler) // self.batch_size
         else:
             return (len(self.sampler) + self.batch_size - 1) // self.batch_size
-
-
-# def fetch_dataloader(args, vigor=None, split='train'):
-#     if vigor is None:
-#         vigor = VIGOR(args, split)
-#
-#     print('Total available image pairs: %d' % len(vigor))
-#
-#     if split == 'train':
-#         # 随机打乱索引并取一半数据
-#         total_indices = np.arange(len(vigor))
-#         np.random.shuffle(total_indices)
-#         sampled_indices = total_indices[:len(total_indices) // 4]
-#         sampled_vigor = Subset(vigor, sampled_indices)
-#
-#         print('Randomly selected %d image pairs for training/validation.' % len(sampled_vigor))
-#
-#         # 再划分训练和验证集（80%训练，20%验证）
-#         index_list = np.arange(len(sampled_vigor))
-#         train_indices = index_list[:int(len(index_list) * 0.8)]
-#         val_indices = index_list[int(len(index_list) * 0.8):]
-#         training_set = Subset(sampled_vigor, train_indices)
-#         val_set = Subset(sampled_vigor, val_indices)
-#
-#         if not isinstance(vigor.pano_label, np.ndarray):
-#             vigor.pano_label = np.array(vigor.pano_label)
-#
-#         # 获取被采样数据的 pano_label
-#         sampled_pano_label = vigor.pano_label[np.array(sampled_indices, dtype=int)]
-#         train_pano_label = sampled_pano_label[train_indices]
-#
-#         train_bs = DistanceBatchSampler(torch.utils.data.RandomSampler(training_set), args.batch_size, True, train_pano_label)
-#         train_dataloader = DataLoader(training_set, batch_sampler=train_bs, num_workers=8)
-#         val_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=8)
-#
-#         print("Using {} images for training, {} images for validation.".format(len(training_set), len(val_set)))
-#         return train_dataloader, val_dataloader
-#
-#     else:
-#         nw = min([os.cpu_count(), args.batch_size if args.batch_size > 1 else 0, 8])  # number of workers
-#         print('Using {} dataloader workers every process'.format(nw))
-#         test_loader = DataLoader(vigor, batch_size=16,
-#                                  pin_memory=True, shuffle=False, num_workers=nw, drop_last=False)
-#         return test_loader
 
 
 def fetch_dataloader(args, vigor=None, split='train'):

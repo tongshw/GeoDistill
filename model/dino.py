@@ -33,19 +33,6 @@ class DINO(torch.nn.Module):
         for param in self.vit.parameters():
             param.requires_grad = False
 
-        # 添加adapter
-        # self.vit = src.models.add_adapter(
-        #     self.vit,
-        #     type="low-rank-scaling",
-        #     shared=False,
-        #     scale=1.0, # type: ignore
-        #     hidden_dim=16,
-        #     patch_embed_adapter=True,
-        #     adapter_trainable=True,
-        #     norm_trainable=True,
-        #     only_scaler_trainable=False,
-        # )
-
         self.has_registers = "_reg" in model_name
 
         assert output in ["cls", "gap", "dense", "dense-cls"]

@@ -1,0 +1,66 @@
+{
+    "p_siamese": true,
+
+    "orig_label": false,
+
+    "batch_size": 16,
+    "lr": 1e-4,
+    "weight_decay": 1e-5,
+    "temperature": 4.0,
+
+    "augment": false,
+    "ori_noise": 45,
+    "orien": true,
+
+    "ckpt_g2sweakly": null,
+    "ckpt_geodistill":null,
+    "teacher_ckpt": null,
+    "student_ckpt": null,
+
+    "model": "/data/test/code/geodistill_vit/kitti/student/cross-g2s-woNY-resume_20250626_004913.pth",
+    "save_path": "vigor_ckpt",
+    "teacher": null,
+    "student": null,
+
+    "wdecay": 0.0005,
+    "epsilon": 1e-7,
+    "clip": 1.0,
+    "gamma": 0.85 ,
+    "student_temp": 0.06,
+    "teacher_temp": 0.06,
+    "ema": 0.9,
+    "sigma": 4,
+    "dynamic_fov": true,
+    "dynamic_low": 180,
+    "dynamic_high": 240,
+
+
+    "image_size": 512,
+    "sat_size": 640,
+    "zoom": 20,
+    "fov_size": 270,
+    "fov_decay": 0,
+    "bev_size": 512,
+    "grid_size": 8,
+
+
+    "levels": [0,2],
+    "channels": [64, 16, 4],
+    "GPS_error": 5,
+    "GPS_error_coe": 0,
+
+    "IMG_FREQ": 20000,
+    "SUM_FREQ": 100,
+    "vis_freq": 25,
+
+    "visualize": true,
+    "save_visualization": true,
+    "wandb": false,
+
+    "mask_fov": true,
+    "mask_activation": false,
+    "mask_ratio": 0.2,
+    "mask_MAE": false,
+    "MAE_ratio": 0.55
+
+}

@@ -2,28 +2,17 @@
     "p_siamese": true,
 
     "dataset": "kitti",
-    "orig_label": false,
-    "cross_area": false,
 
     "batch_size": 16,
-    "lr": 0.00035,
-    "num_steps": 180000,
-    "scheduler": "OneCycle",
-    "loss_w": [0.1, 1.0, 10.0],
-    "temperature": 4.0,
-    "consitency_weight": 100,
-    "corr_weight": 1,
+    "lr": 1e-4,
 
-    "augment": false,
-    "ori_noise": 45,
-    "orien": true,
 
     "restore_ckpt": "/data/test/code/multi-local/kitti/vanilla/cross-vanilla-infer_20250419_194711.pth",
 
     "teacher_ckpt": null,
     "student_ckpt": null,
     "model": "/data/test/code/multi-local/kitti/teacher/kitti-distill-210-270_20250420_162809.pth",
-    "save_path": "kitti",
+    "save_path": "kitti_ckpt",
     "teacher": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "student": "/data/test/code/multi-local/distillation_model/teacher/best/cross-randomfov180-240_20250120_094602.pth",
 
@@ -34,9 +23,6 @@
     "student_temp": 0.06,
     "teacher_temp": 0.06,
     "ema": 0.9,
-    "sigma": 4,
-    "self_distillation_w": 0.1,
-    "start_epoch": 0,
     "dynamic_fov": true,
     "dynamic_low": 270,
     "dynamic_high": 300,
@@ -46,31 +32,24 @@
     "sat_size": 640,
     "zoom": 20,
     "fov_size": 270,
-    "fov_decay": 0,
     "bev_size": 300,
-    "grid_size": 8,
 
 
     "levels": [0,2],
     "channels": [64, 16, 4],
-    "GPS_error": 5,
-    "GPS_error_coe": 0,
 
     "IMG_FREQ": 20000,
     "SUM_FREQ": 100,
     "vis_freq": 100,
 
-    "visualize": false,
-    "save_visualization": true,
-    "wandb": true,
+    "visualize": true,
+    "save_visualization": false,
+    "wandb": false,
 
     "mask_activation": false,
     "mask_ratio": 0.2,
     "mask_MAE": true,
-    "MAE_ratio": 0.35,
+    "MAE_ratio": 0.35
 
-    "adaptive_loss": false,
-    "kl_loss": false,
-    "ce_loss": true,
-    "wd_loss": false
+
 }

@@ -70,7 +70,6 @@ class SatGrdDataset(Dataset):
         self.shift_range_pixels_lon = shift_range_lon / self.meter_per_pixel  # shift range is in terms of meters
         self.fov_size = args.fov_size
         self.bev_size = args.bev_size
-        self.fov_decay = args.fov_decay
         self.dynamic_fov = args.dynamic_fov
         self.dynamic_low = args.dynamic_low
         self.dynamic_high = args.dynamic_high

@@ -3,6 +3,7 @@ import random
 import numpy as np
 import os
 from PIL import Image
+from matplotlib import pyplot as plt
 from torch.utils.data import Dataset
 
 import torch
@@ -163,6 +164,10 @@ class SatGrdDataset(Dataset):
                                           (1, 0, CameraGPS_shift_left[0] / self.meter_per_pixel,
                                            0, 1, CameraGPS_shift_left[1] / self.meter_per_pixel),
                                           resample=Image.BILINEAR)
+
+        # plt.figure(figsize=(10, 5))
+        # plt.imshow((sat_align_cam * 256).permute(1, 2, 0).cpu().detach().numpy().astype(np.uint8))
+        # plt.show()
         # the homography is defined on: from target pixel to source pixel
         # now east direction is the real vehicle heading direction
 
@@ -176,7 +181,9 @@ class SatGrdDataset(Dataset):
                 (1, 0, gt_shift_x * self.shift_range_pixels_lon,
                  0, 1, -gt_shift_y * self.shift_range_pixels_lat),
                 resample=Image.BILINEAR)
-
+        # plt.figure(figsize=(10, 5))
+        # plt.imshow((sat_rand_shift * 256).permute(1, 2, 0).cpu().detach().numpy().astype(np.uint8))
+        # plt.show()
         # randomly generate roation
         theta = np.random.uniform(-1, 1)
         sat_rand_shift_rand_rot = \
@@ -204,26 +211,19 @@ class SatGrdDataset(Dataset):
         w_end1 = int(np.round(w / 360 * (start_angle1 + masked_fov)))
 
         # 创建两个 mask，并应用到原图像上
-        mask1 = np.zeros_like(grd)
-        mask2 = np.zeros_like(grd)
+        zeros = np.zeros_like(grd)
         grd1 = grd.clone().numpy()
-        grd2 = grd.clone().numpy()
-        ones1 = np.ones_like(grd1)
-        ones2 = np.ones_like(grd2)
+        mask = np.ones_like(grd1)
 
-        grd1[:, :, w_start1:w_end1] = mask1[:, :, w_start1:w_end1]
-        ones1[:, :, w_start1:w_end1] = mask1[:, :, w_start1:w_end1]
-        ones2 = ones2 - ones1
-        grd2 = grd2 * ones2
-
+        grd1[:, :, w_start1:w_end1] = zeros[:, :, w_start1:w_end1]
+        mask[:, :, w_start1:w_end1] = zeros[:, :, w_start1:w_end1]
 
         return sat_align_cam_central_crop, \
             sat_rand_shift_rand_rot_central_crop, \
             left_camera_k, grd_left_imgs[0], \
             torch.tensor(-gt_shift_x, dtype=torch.float32).reshape(1), \
             torch.tensor(-gt_shift_y, dtype=torch.float32).reshape(1), \
-            torch.tensor(theta, dtype=torch.float32).reshape(1), \
-            ones1
+            torch.tensor(theta, dtype=torch.float32).reshape(1), mask
 
 
 class SatGrdDatasetTest(Dataset):
@@ -347,6 +347,11 @@ class SatGrdDatasetTest(Dataset):
                                           (1, 0, CameraGPS_shift_left[0] / self.meter_per_pixel,
                                            0, 1, CameraGPS_shift_left[1] / self.meter_per_pixel),
                                           resample=Image.BILINEAR)
+
+        # plt.figure(figsize=(10, 5))
+        # plt.imshow(sat_align_cam)
+        # plt.show()
+
         # the homography is defined on: from target pixel to source pixel
         # now east direction is the real vehicle heading direction
 
@@ -362,7 +367,9 @@ class SatGrdDatasetTest(Dataset):
                 (1, 0, gt_shift_x * self.shift_range_pixels_lon,
                  0, 1, -gt_shift_y * self.shift_range_pixels_lat),
                 resample=Image.BILINEAR)
-
+        # plt.figure(figsize=(10, 5))
+        # plt.imshow(sat_rand_shift)
+        # plt.show()
         # randomly generate roation
         # theta = np.random.uniform(-1, 1)
         theta = float(theta)
@@ -377,7 +384,9 @@ class SatGrdDatasetTest(Dataset):
             sat_align_cam_central_crop = self.satmap_transform(sat_align_cam_central_crop)
 
         # gt_corr_x, gt_corr_y = self.generate_correlation_GTXY(gt_shift_x, gt_shift_y, theta)
-
+        # plt.figure(figsize=(10, 5))
+        # plt.imshow(sat_rand_shift_rand_rot_central_crop.permute(1,2,0).numpy())
+        # plt.show()
         return sat_align_cam_central_crop, \
             sat_rand_shift_rand_rot_central_crop, left_camera_k, grd_left_imgs[0], \
             torch.tensor(-gt_shift_x, dtype=torch.float32).reshape(1), \

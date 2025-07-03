@@ -435,7 +435,9 @@ def train_geodistill(args):
 
             print_colored(f"Saved new best teacher model with mean error: {t_best_val_mean_err:.4f}")
 
-        print(f"============GeoDistill Epoch {epoch + 1} Summary==============")
+        area = "cross area" if args.cross_area else "same area"
+
+        print(f"============GeoDistill {area}  Epoch {epoch + 1} Summary==============")
         print(f"Train Loss: {train_loss:.4f}")
         print(f"teacher Mean Error: {t_mean_error:.4f}")
         print(f"teacher Median Error: {t_median_error:.4f}")
@@ -512,8 +514,9 @@ def train_g2sweakly(args):
 
 
         scheduler.step()
+        area = "cross area" if args.cross_area else "same area"
 
-        print(f"============G2SWeakly Epoch {epoch + 1} Summary==============")
+        print(f"============G2SWeakly {area}  Epoch {epoch + 1} Summary==============")
         print(f"Train Loss: {train_loss:.4f}")
         print(f"model Mean Error: {mean_error:.4f}")
         print(f"model Median Error: {median_error:.4f}")

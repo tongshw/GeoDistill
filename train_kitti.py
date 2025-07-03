@@ -9,6 +9,7 @@ import numpy as np
 from matplotlib.colors import Normalize
 
 from dataset.KITTI import load_train_data, load_test1_data, load_test2_data
+from model.dino import DINO
 from model.loss import cross_entropy, multi_scale_contrastive_loss
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
@@ -24,6 +25,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+# from model.network_kitti_dino import LocalizationNet, get_meter_per_pixel
 from model.Network_KITTI import LocalizationNet, get_meter_per_pixel
 
 from utils.util import setup_seed, print_colored, count_parameters, visualization, TextColors, vis_corr, vis_two_sat, \
@@ -46,7 +48,7 @@ def update_teacher_model(student_model, teacher_model, ema_decay=0.99):
         teacher_param.data.mul_(ema_decay).add_((1 - ema_decay) * student_param.data)
 
 
-def train_epoch_geodistill(args, teacher, student, train_loader, optimizer, device, epoch):
+def train_epoch_geodistill(args, dino, teacher, student, train_loader, optimizer, device, epoch):
     student.train()
     teacher.eval()
     total_loss = 0
@@ -107,7 +109,7 @@ def train_epoch_geodistill(args, teacher, student, train_loader, optimizer, devi
 
 
 
-def train_epoch_g2sweakly(args, model, train_loader, optimizer, device, epoch):
+def train_epoch_g2sweakly(args, dino, model, train_loader, optimizer, device, epoch):
     model.train()
     total_loss = 0
 
@@ -116,10 +118,15 @@ def train_epoch_g2sweakly(args, model, train_loader, optimizer, device, epoch):
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading, ones1 = [item.to(device) for
-                                                                                                    item in data_blob[:7]]
+        sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading, mask = [item.to(device) for
+                                                                                                    item in data_blob[:8]]
 
-        sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, shift_lats, shift_lons = \
+        sat_feat_list = dino(sat_map)
+        grd_feat_list = dino(grd_left_imgs)
+
+        # sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, shift_lats, shift_lons = \
+        #     model(sat_feat_list, grd_feat_list, left_camera_k)
+        sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, mask_dict = \
             model(sat_map, grd_left_imgs, left_camera_k)
 
         # 清除梯度
@@ -157,7 +164,7 @@ def train_epoch_g2sweakly(args, model, train_loader, optimizer, device, epoch):
 
 
 
-def validate(args, model, val_loader, device, epoch=-1, vis=False, name=None):
+def validate(args, dino, model, val_loader, device, epoch=-1, vis=False, name=None):
     model.eval()
     total_loss = 0
     all_errors = []
@@ -175,10 +182,18 @@ def validate(args, model, val_loader, device, epoch=-1, vis=False, name=None):
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
+            # sat_align_cam和sat_map都是256*256
             sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading = [
                 item.to(device) for
                 item in data_blob[:7]]
 
+            sat_feat_list = dino(sat_map)
+            pano_feat_list = dino(grd_left_imgs)
+
+            # plt.figure(figsize=(10, 5))
+            # plt.imshow((sat_map[0]*256).permute(1, 2, 0).cpu().detach().numpy().astype(np.uint8))
+            # plt.show()
+            # 原版的网络输出最大的feature是256*256 和输入图像一样大
             sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, mask_dict = \
                 model(sat_map, grd_left_imgs, left_camera_k)
 
@@ -245,10 +260,8 @@ def train_geodistill(args):
 
     # 模型初始化
     student = LocalizationNet(args).to(device)
+    dinov2 = DINO().to(device)
 
-
-            # 损失函数
-    criterion = None
 
     optimizer = torch.optim.AdamW(
         student.parameters(),
@@ -304,13 +317,13 @@ def train_geodistill(args):
         print(f"\nEpoch {epoch + 1}/{args.epochs}")
 
         # 训练
-        train_loss = train_epoch_geodistill(args, teacher, student, train_loader, optimizer, device, epoch)
+        train_loss = train_epoch_geodistill(args, dinov2, teacher, student, train_loader, optimizer, device, epoch)
 
         update_teacher_model(student, teacher, args.ema)
 
         # 验证
 
-        s_mean_error, s_median_error = validate(args, student, val_loader, device, epoch, name="student")
+        s_mean_error, s_median_error = validate(args, dinov2, student, val_loader, device, epoch, name="student")
 
         if s_mean_error < s_best_val_mean_err:
             s_best_val_mean_err = s_mean_error
@@ -330,7 +343,7 @@ def train_geodistill(args):
 
             print_colored(f"Saved new best student model with mean error: {s_best_val_mean_err:.4f}")
 
-        t_mean_error, t_median_error = validate(args, teacher, val_loader, criterion, device, epoch, name="teacher")
+        t_mean_error, t_median_error = validate(args, teacher, val_loader, device, epoch, name="teacher")
 
         # 学习率调度
         scheduler.step()
@@ -375,14 +388,11 @@ def train_g2sweakly(args):
     train_loader = load_train_data(args, args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
     val_loader = load_test1_data(args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
 
-    # train_loader, val_loader = fetch_dataloader(args, vigor)
 
     # 模型初始化
     model = LocalizationNet(args).to(device)
 
-
-            # 损失函数
-    criterion = None
+    dinov2 = DINO().to(device)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -409,18 +419,17 @@ def train_g2sweakly(args):
         eta_min=1e-4
     )
 
-
-
-    # 训练循环
     s_best_val_mean_err = float('inf')
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch + 1}/{args.epochs}")
-        # 训练
-        train_loss = train_epoch_g2sweakly(args, model, train_loader, optimizer, device, epoch)
+        # s_mean_error, s_median_error = validate(args, dinov2, model, val_loader, device, epoch, name="student")
 
-        # 验证
 
-        s_mean_error, s_median_error = validate(args, model, val_loader, device, epoch, name="student")
+        # training
+        train_loss = train_epoch_g2sweakly(args, dinov2, model, train_loader, optimizer, device, epoch)
+
+        # validation
+        s_mean_error, s_median_error = validate(args, dinov2, model, val_loader, device, epoch, name="student")
 
         if s_mean_error < s_best_val_mean_err:
             s_best_val_mean_err = s_mean_error
@@ -459,10 +468,11 @@ def test_cross(args):
     test_loader = load_test2_data(args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
 
     model = LocalizationNet(args).to(device)
+    dinov2 = DINO().to(device)
 
     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
     criterion = nn.CrossEntropyLoss()
-    mean_error, median_error = validate(args, model, test_loader, criterion, device, name="student")
+    mean_error, median_error = validate(args, dinov2, model, test_loader, criterion, device, name="student")
 
 def test_same(args):
     device = torch.device("cuda:" + str(args.gpuid[0]))
@@ -470,10 +480,11 @@ def test_same(args):
     test_loader = load_test1_data(args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
 
     model = LocalizationNet(args).to(device)
+    dinov2 = DINO().to(device)
 
     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
     criterion = nn.CrossEntropyLoss()
-    mean_error, median_error = validate(args, model, test_loader, criterion, device, name="student")
+    mean_error, median_error = validate(args, dinov2, model, test_loader, criterion, device, name="student")
 
 
 if __name__ == '__main__':
@@ -499,7 +510,7 @@ if __name__ == '__main__':
                         help='Cross_area or same_area')  # Siamese
     parser.add_argument('--train', default=True)
 
-    parser.add_argument('--train_g2sweakly', default=False)
+    parser.add_argument('--train_g2sweakly', default=True)
     args = parser.parse_args()
 
     config = json.load(open(args.config, 'r'))

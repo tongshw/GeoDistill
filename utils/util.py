@@ -17,7 +17,7 @@ Camera_height = 1.65 #meter
 Camera_distance = 0.54 #meter
 
 SatMap_original_sidelength = 512 # 0.2 m per pixel
-SatMap_process_sidelength = 512 # 0.2 m per pixel
+SatMap_process_sidelength = 256 # 0.2 m per pixel
 Default_lat = 49.015
 
 CameraGPS_shift_left = [1.08, 0.26]

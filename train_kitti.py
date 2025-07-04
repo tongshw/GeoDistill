@@ -13,7 +13,7 @@ from model.dino import DINO
 from model.loss import cross_entropy, multi_scale_contrastive_loss
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
-# os.environ['WANDB_MODE'] = "offline"
+os.environ['WANDB_MODE'] = "offline"
 import time
 
 import torch
@@ -25,8 +25,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-# from model.network_kitti_dino import LocalizationNet, get_meter_per_pixel
-from model.Network_KITTI import LocalizationNet, get_meter_per_pixel
+from model.network_kitti_dino import LocalizationNet, get_meter_per_pixel
+# from model.Network_KITTI import LocalizationNet, get_meter_per_pixel
 
 from utils.util import setup_seed, print_colored, count_parameters, visualization, TextColors, vis_corr, vis_two_sat, \
     visualize_distributions
@@ -57,23 +57,32 @@ def train_epoch_geodistill(args, dino, teacher, student, train_loader, optimizer
     pbar = tqdm(train_loader, desc='Training')
 
     for i_batch, data_blob in enumerate(pbar):
-        sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading, ones1 = [item.to(device) for
+        sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading, mask = [item.to(device) for
                                                                                                     item in data_blob]
-        masked_grd = grd_left_imgs * ones1
+        masked_grd = grd_left_imgs * mask
+        # fig = plt.figure(figsize=(20, 5), dpi=100)  # 可自定义尺寸
+        # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
+        # ax.axis('off')  # 不显示坐标轴
+        # mask = masked_grd[0].detach().cpu().numpy().transpose(1, 2, 0) * 255
+        # ax.imshow(mask.astype(np.uint8))
+        # plt.show()
 
+        sat_feat_list = dino(sat_map)
+        grd_feat_list = dino(grd_left_imgs)
 
-        sat_feat_dict_t, sat_conf_dict_t, g2s_feat_dict_t, g2s_conf_dict_t, mask_dict_t = \
-            teacher(sat_map, grd_left_imgs, left_camera_k)
+        copied_sat_feat_list = [t.clone() for t in sat_feat_list]
 
-        sat_feat_dict_s, sat_conf_dict_s, g2s_feat_dict_s, g2s_conf_dict_s, mask_dict_s = \
-            student(sat_map, masked_grd, left_camera_k, ones1)
+        sat_feat_dict_t, g2s_feat_dict_t, mask_dict_t = teacher(sat_feat_list, grd_feat_list, left_camera_k)
+
+        masked_grd_feat_list = dino(masked_grd)
+
+        sat_feat_dict_s, g2s_feat_dict_s, mask_dict_s = student(copied_sat_feat_list, masked_grd_feat_list, left_camera_k, mask)
 
         # 清除梯度
         optimizer.zero_grad()
 
-        teacher_corr = teacher.calc_corr_for_train(sat_feat_dict_t, sat_conf_dict_t, g2s_feat_dict_t, g2s_conf_dict_t, batch_wise=False)
-        student_corr = teacher.calc_corr_for_train(sat_feat_dict_s, sat_conf_dict_s, g2s_feat_dict_s, g2s_conf_dict_s,
-                                                   batch_wise=False, mask_dict=mask_dict_s)
+        teacher_corr = teacher.calc_corr_for_train(sat_feat_dict_t, g2s_feat_dict_t, batch_wise=False)
+        student_corr = teacher.calc_corr_for_train(sat_feat_dict_s, g2s_feat_dict_s, batch_wise=False, mask_dict=mask_dict_s)
 
 
         loss = cross_entropy(student_corr, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
@@ -118,21 +127,20 @@ def train_epoch_g2sweakly(args, dino, model, train_loader, optimizer, device, ep
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading, mask = [item.to(device) for
-                                                                                                    item in data_blob[:8]]
+        sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading = [item.to(device) for
+                                                                                                    item in data_blob[:7]]
 
         sat_feat_list = dino(sat_map)
         grd_feat_list = dino(grd_left_imgs)
 
-        # sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, shift_lats, shift_lons = \
-        #     model(sat_feat_list, grd_feat_list, left_camera_k)
-        sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, mask_dict = \
-            model(sat_map, grd_left_imgs, left_camera_k)
+        # sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, fov_mask_dict = \
+        #     model(sat_map, grd_left_imgs, left_camera_k)
+        sat_feat_dict, g2s_feat_dict, mask_dict = model(sat_feat_list, grd_feat_list, left_camera_k)
 
         # 清除梯度
         optimizer.zero_grad()
 
-        corr_maps = model.calc_corr_for_train(sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, batch_wise=True)
+        corr_maps = model.calc_corr_for_train(sat_feat_dict, g2s_feat_dict, batch_wise=True)
 
         loss = multi_scale_contrastive_loss(corr_maps, args.levels)
 
@@ -176,7 +184,7 @@ def validate(args, dino, model, val_loader, device, epoch=-1, vis=False, name=No
     gt_vs = []
 
     torch.cuda.empty_cache()
-    meter_per_pixel = get_meter_per_pixel()
+
     with torch.no_grad():
         pbar = tqdm(val_loader, desc='Validation')
 
@@ -184,20 +192,20 @@ def validate(args, dino, model, val_loader, device, epoch=-1, vis=False, name=No
             # 解包数据
             # sat_align_cam和sat_map都是256*256
             sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading = [
-                item.to(device) for
-                item in data_blob[:7]]
+                item.to(device) for item in data_blob[:7]]
 
             sat_feat_list = dino(sat_map)
-            pano_feat_list = dino(grd_left_imgs)
+            grd_feat_list = dino(grd_left_imgs)
 
             # plt.figure(figsize=(10, 5))
             # plt.imshow((sat_map[0]*256).permute(1, 2, 0).cpu().detach().numpy().astype(np.uint8))
             # plt.show()
             # 原版的网络输出最大的feature是256*256 和输入图像一样大
-            sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict, mask_dict = \
-                model(sat_map, grd_left_imgs, left_camera_k)
+            sat_feat_dict, g2s_feat_dict, mask_dict = model(sat_feat_list, grd_feat_list, left_camera_k)
 
-            corr = model.calc_corr_for_val(sat_feat_dict, sat_conf_dict, g2s_feat_dict, g2s_conf_dict)
+            meter_per_pixel = get_meter_per_pixel(scale=sat_feat_dict[2].shape[-1]/sat_map.shape[-1])
+
+            corr = model.calc_corr_for_val(sat_feat_dict, g2s_feat_dict, mask_dict=None)
 
             max_level = args.levels[-1]
 
@@ -273,14 +281,14 @@ def train_geodistill(args):
     t_best_val_mean_err = float('inf')
     s_best_val_mean_err = float('inf')
 
-    if args.restore_ckpt is not None:
-        PATH = args.restore_ckpt  # 'checkpoints/best_checkpoint.pth'
+    if args.ckpt_geodistill is not None:
+        PATH = args.ckpt_geodistill  # 'checkpoints/best_checkpoint.pth'
         if os.path.isfile(PATH):
             checkpoint = torch.load(PATH)
             student.load_state_dict(checkpoint['model_state_dict'])
             # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             # scheduler.load_state_dict(checkpoint['lr_schedule'])
-            print_colored("Have load state_dict from: {}".format(args.restore_ckpt))
+            print_colored("Have load state_dict from: {}".format(PATH))
     elif args.student_ckpt is not None:
         PATH = args.student_ckpt  # 'checkpoints/best_checkpoint.pth'
         if os.path.isfile(PATH):
@@ -289,7 +297,7 @@ def train_geodistill(args):
             student.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             # scheduler.load_state_dict(checkpoint['lr_schedule'])
-            print_colored("Have load state_dict from: {}".format(args.restore_ckpt))
+            print_colored("Have load state_dict from: {}".format(PATH))
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
@@ -403,14 +411,14 @@ def train_g2sweakly(args):
     # 学习率调度
 
 
-    if args.restore_ckpt is not None:
-        PATH = args.restore_ckpt  # 'checkpoints/best_checkpoint.pth'
+    if args.ckpt_g2sweakly is not None:
+        PATH = args.ckpt_g2sweakly  # 'checkpoints/best_checkpoint.pth'
         if os.path.isfile(PATH):
             checkpoint = torch.load(PATH)
             model.load_state_dict(checkpoint['model_state_dict'])
             # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             # scheduler.load_state_dict(checkpoint['lr_schedule'])
-            print_colored("Have load state_dict from: {}".format(args.restore_ckpt))
+            print_colored("Have load state_dict from: {}".format(PATH))
 
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -471,8 +479,7 @@ def test_cross(args):
     dinov2 = DINO().to(device)
 
     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
-    criterion = nn.CrossEntropyLoss()
-    mean_error, median_error = validate(args, dinov2, model, test_loader, criterion, device, name="student")
+    mean_error, median_error = validate(args, dinov2, model, test_loader, device, name="student")
 
 def test_same(args):
     device = torch.device("cuda:" + str(args.gpuid[0]))
@@ -484,7 +491,7 @@ def test_same(args):
 
     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
     criterion = nn.CrossEntropyLoss()
-    mean_error, median_error = validate(args, dinov2, model, test_loader, criterion, device, name="student")
+    mean_error, median_error = validate(args, dinov2, model, test_loader, device, name="student")
 
 
 if __name__ == '__main__':
@@ -503,7 +510,7 @@ if __name__ == '__main__':
     parser.add_argument('--shift_range_lon', type=float, default=20., help='meters')
 
 
-    parser.add_argument('--name', default="kitti-distill-270-300", help="none")
+    parser.add_argument('--name', default="kitti-dino-g2sweakly", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',

@@ -248,12 +248,16 @@ class LocalizationNet(nn.Module):
             # meter_per_pixel = self.meters_per_pixel[level]
             sat_feat = sat_feat_dict_forT[level]
             grd_feat = grd_feat_dict_forT[level]
+            max3 = grd_feat.max()
+            min3 = grd_feat.min()
 
             A = sat_feat.shape[-1]
             grd_feat_proj, grd_conf_proj, grd_uv, mask = self.project_grd_to_map(
                 grd_feat, grd_conf_dict_forT[level], shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
                 ori_grdW,
                 require_jac=False)
+            max4 = grd_feat_proj.max()
+            min4 = grd_feat_proj.min()
             B, c, h, w = grd_feat.shape
             if fov_mask is not None:
 

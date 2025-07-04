@@ -10,7 +10,7 @@ import numpy as np
 from model.dino import center_padding, DINO
 from model.loss import cross_entropy, multi_scale_contrastive_loss
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 os.environ['WANDB_MODE'] = "offline"
 import time
 

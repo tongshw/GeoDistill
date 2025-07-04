@@ -6,7 +6,7 @@ class DINO(torch.nn.Module):
     def __init__(
         self,
         dino_name="dinov2",
-        model_name="vitb14",
+        model_name="vitl14",
         output="dense-cls",
         layer=-1,
         return_multilayer=True,

@@ -11,6 +11,7 @@ from matplotlib import pyplot as plt
 from torch.utils.data import DataLoader
 import torchvision.models as models
 
+from model.dpt import DPT
 from model.efficientnet_pytorch import EfficientNet
 from torchvision import transforms
 from VGG import VGGUnet
@@ -33,8 +34,12 @@ class LocalizationNet(nn.Module):
         self.rotation_range = args.rotation_range
 
         input_dim = 3
-        self.sat_VGG = VGGUnet(self.levels, self.channels)
-        self.grd_VGG = VGGUnet(self.levels, self.channels) if args.p_siamese else None
+        # self.sat_VGG = VGGUnet(self.levels, self.channels)
+        # self.grd_VGG = VGGUnet(self.levels, self.channels) if args.p_siamese else None
+
+        self.SatDPT = DPT(input_dims=[1024*2, 1024*2, 1024*2, 1024*2])
+        self.GrdDPT = DPT(input_dims=[1024*2, 1024*2, 1024*2, 1024*2])
+
 
         feature_dim = 320
         self.rotation_range = 0
@@ -223,37 +228,49 @@ class LocalizationNet(nn.Module):
         Returns:
 
         '''
+        ori_grdH, ori_grdW = 256, 1024
 
-        B, _, ori_grdH, ori_grdW = grd_img_left.shape
+        max1 = grd_feat_list[0].max()
+        max2 = grd_feat_list[1].max()
+        sat_feat_dict = self.SatDPT(sat_feat_list)
 
-        shift_u = torch.zeros([B, 1], dtype=torch.float32, requires_grad=True, device=sat_map.device)
-        shift_v = torch.zeros([B, 1], dtype=torch.float32, requires_grad=True, device=sat_map.device)
+        grd_feat_dict = self.GrdDPT(grd_feat_list)
+
+        max2 = grd_feat_dict[0].max()
+        min2 = grd_feat_dict[0].min()
+
+
+        B = sat_feat_dict[0].shape[0]
+
+        shift_u = torch.zeros([B, 1], dtype=torch.float32, requires_grad=True, device=sat_feat_dict[0].device)
+        shift_v = torch.zeros([B, 1], dtype=torch.float32, requires_grad=True, device=sat_feat_dict[0].device)
 
         g2s_feat_dict = {}
         g2s_conf_dict = {}
 
-        heading = torch.zeros([B, 1], dtype=torch.float32, requires_grad=True, device=sat_map.device)
+        heading = torch.zeros([B, 1], dtype=torch.float32, requires_grad=True, device=sat_feat_dict[0].device)
         shift_lats = None
         shift_lons = None
 
 
-        grd_feat_dict_forT, grd_conf_dict_forT = self.grd_VGG(grd_img_left)
-        sat_feat_dict_forT, sat_conf_dict_forT = self.sat_VGG(sat_map)
+        # grd_feat_dict_forT, grd_conf_dict_forT = self.grd_VGG(grd_img_left)
+        # sat_feat_dict_forT, sat_conf_dict_forT = self.sat_VGG(sat_map)
 
         grd_uv_dict = {}
         mask_dict = {}
         fov_mask_dict = {}
-        for level in range(4):
+        for _, level in enumerate(self.levels):
             # meter_per_pixel = self.meters_per_pixel[level]
-            sat_feat = sat_feat_dict_forT[level]
-            grd_feat = grd_feat_dict_forT[level]
+            sat_feat = sat_feat_dict[level]
+            grd_feat = grd_feat_dict[level]
+            grd_conf = torch.ones_like(grd_feat)
+            _, c, h, w = grd_feat.shape
 
             A = sat_feat.shape[-1]
             grd_feat_proj, grd_conf_proj, grd_uv, mask = self.project_grd_to_map(
-                grd_feat, grd_conf_dict_forT[level], shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
-                ori_grdW,
-                require_jac=False)
-            B, c, h, w = grd_feat.shape
+                grd_feat, grd_conf, shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
+                ori_grdW, require_jac=False)
+
             if fov_mask is not None:
 
                 # fig = plt.figure(figsize=(20, 5), dpi=100)  # 可自定义尺寸
@@ -263,10 +280,11 @@ class LocalizationNet(nn.Module):
                 # ax.imshow(mask.astype(np.uint8))
                 # plt.show()
 
-                resized_batch1 = []
+                resized_mask_batch = []
+
                 for i in range(B):  # 遍历 batch
-                    resized_image1 = cv2.resize(fov_mask[i].detach().cpu().numpy().transpose(1, 2, 0), (w, h), interpolation=cv2.INTER_LINEAR)
-                    resized_batch1.append(resized_image1)
+                    resized_mask = cv2.resize(fov_mask[i].detach().cpu().numpy().transpose(1, 2, 0), (w, h), interpolation=cv2.INTER_LINEAR)
+                    resized_mask_batch.append(resized_mask)
 
                 # fig = plt.figure(figsize=(10, 5), dpi=100)  # 可自定义尺寸
                 # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
@@ -275,14 +293,13 @@ class LocalizationNet(nn.Module):
                 # plt.show()
 
                 # 将结果转回 NumPy 数组，然后再转回 PyTorch 张量
-                resized_batch1 = np.stack(resized_batch1)  # 将所有图片拼接成一个数组
-                mask1 = torch.from_numpy(resized_batch1)
-                mask1 = mask1.to(sat_feat.device).permute(0, 3, 1, 2)
+                resized_mask_batch = np.stack(resized_mask_batch)  # 将所有图片拼接成一个数组
+                mask_ = torch.from_numpy(resized_mask_batch)
+                mask_ = mask_.to(sat_feat.device).permute(0, 3, 1, 2)
 
                 fov_mask_proj, _, _, _ = self.project_grd_to_map(
-                    mask1, grd_conf_dict_forT[level], shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
-                    ori_grdW,
-                    require_jac=False)
+                    mask_, grd_conf, shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
+                    ori_grdW, require_jac=False)
                 fov_mask_dict[level] = fov_mask_proj
                 # fig = plt.figure(figsize=(10, 5), dpi=100)  # 可自定义尺寸
                 # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
@@ -309,7 +326,7 @@ class LocalizationNet(nn.Module):
         for _, level in enumerate(self.levels):
 
             meter_per_pixel = self.meters_per_pixel[level]
-            sat_feat = sat_feat_dict_forT[level]
+            sat_feat = sat_feat_dict[level]
 
             A = sat_feat.shape[-1]
 
@@ -325,9 +342,9 @@ class LocalizationNet(nn.Module):
                 g2s_mask = TF.center_crop(fov_mask_dict[level], [crop_H, crop_W])
                 fov_mask_dict[level] = g2s_mask
 
-        return sat_feat_dict_forT, sat_conf_dict_forT, g2s_feat_dict, g2s_conf_dict, fov_mask_dict
+        return sat_feat_dict, g2s_feat_dict, fov_mask_dict
 
-    def calc_corr_for_train(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask_dict=None,
+    def calc_corr_for_train(self, sat_feat_dict, bev_feat_dict, mask_dict=None,
                             batch_wise=False):
         corr_maps = {}
 
@@ -335,7 +352,7 @@ class LocalizationNet(nn.Module):
             sat_feat = sat_feat_dict[level]
             # sat_conf = sat_conf_dict[level]
             bev_feat = bev_feat_dict[level]
-            bev_conf = bev_conf_dict[level]
+            bev_conf = torch.ones_like(bev_feat)[:, :1, :, :]
             if mask_dict is not None:
                 mask = mask_dict[level]
 
@@ -357,6 +374,8 @@ class LocalizationNet(nn.Module):
             A = sat_feat.shape[2]
 
             if batch_wise:
+                max_ = bev_feat.max()
+                min_ = bev_feat.min()
                 signal = sat_feat.repeat(1, B, 1, 1)  # [B(M), BC(NC), H, W] [8, 2048, 64, 64]
                 kernel = bev_feat * bev_conf.pow(2)  # [8, 256, 25, 25]
                 corr = F.conv2d(signal, kernel, groups=B)  # [8, 8, 40, 40], B=8
@@ -401,13 +420,12 @@ class LocalizationNet(nn.Module):
 
         return corr_maps
 
-    def calc_corr_for_val(self, sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask_dict=None):
+    def calc_corr_for_val(self, sat_feat_dict, bev_feat_dict, mask_dict=None):
         level = self.levels[-1]
 
         sat_feat = sat_feat_dict[level]
-        sat_conf = sat_conf_dict[level]
         bev_feat = bev_feat_dict[level]
-        bev_conf = bev_conf_dict[level]
+        bev_conf = torch.ones_like(bev_feat)[:, :1, :, :]
         mask = None
         if mask_dict is not None:
             mask = mask_dict[level]

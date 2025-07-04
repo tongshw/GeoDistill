@@ -53,7 +53,7 @@
     "SUM_FREQ": 100,
     "vis_freq": 25,
 
-    "visualize": true,
+    "visualize": false,
     "save_visualization": true,
     "wandb": false,
 

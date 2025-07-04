@@ -7,11 +7,13 @@
     "lr": 1e-4,
 
 
-    "restore_ckpt": "/data/test/code/multi-local/kitti/vanilla/cross-vanilla-infer_20250419_194711.pth",
+    "restore_ckpt": null,
 
+    "ckpt_g2sweakly": null,
+    "ckpt_geodistill":"/data/test/code/geodistill_vit/kitti_ckpt/vanilla/kitti-distill-270-300_20250704_101504.pth",
     "teacher_ckpt": null,
     "student_ckpt": null,
-    "model": "/data/test/code/multi-local/kitti/teacher/kitti-distill-210-270_20250420_162809.pth",
+    "model": "/data/test/code/geodistill_vit/kitti_ckpt/vanilla/kitti-distill-270-300_20250704_101504.pth",
     "save_path": "kitti_ckpt",
     "teacher": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "student": "/data/test/code/multi-local/distillation_model/teacher/best/cross-randomfov180-240_20250120_094602.pth",
@@ -44,7 +46,7 @@
 
     "visualize": true,
     "save_visualization": false,
-    "wandb": false,
+    "wandb": true,
 
     "mask_activation": false,
     "mask_ratio": 0.2,

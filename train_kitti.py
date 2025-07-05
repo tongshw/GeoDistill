@@ -351,7 +351,7 @@ def train_geodistill(args):
 
             print_colored(f"Saved new best student model with mean error: {s_best_val_mean_err:.4f}")
 
-        t_mean_error, t_median_error = validate(args, teacher, val_loader, device, epoch, name="teacher")
+        t_mean_error, t_median_error = validate(args, dinov2, teacher, val_loader, device, epoch, name="teacher")
 
         # 学习率调度
         scheduler.step()
@@ -510,14 +510,14 @@ if __name__ == '__main__':
     parser.add_argument('--shift_range_lon', type=float, default=20., help='meters')
 
 
-    parser.add_argument('--name', default="kitti-dino-g2sweakly", help="none")
+    parser.add_argument('--name', default="kitti-dino-geodistill", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
     parser.add_argument('--train', default=True)
 
-    parser.add_argument('--train_g2sweakly', default=True)
+    parser.add_argument('--train_g2sweakly', default=False)
     args = parser.parse_args()
 
     config = json.load(open(args.config, 'r'))

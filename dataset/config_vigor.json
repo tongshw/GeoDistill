@@ -17,10 +17,16 @@
     "teacher_ckpt": null,
     "student_ckpt": null,
 
-    "model": "/data/test/code/geodistill_vit/kitti/student/cross-g2s-woNY-resume_20250626_004913.pth",
+    "model": "/data/test/code/geodistill_vit/kitti/student/cross-dino-distill_20250531_090106.pth",
     "save_path": "vigor_ckpt",
     "teacher": null,
     "student": null,
+
+    "orientation_model": "/data/test/code/geodistill_vit/rotation_ckpt/cross.pth",
+    "orientation_ckpt": null,
+    "rotation_model": "/data/test/code/multi-local/rotation_model/cross-rot45-l2_20250228_225816.pth",
+    "rotation_model1": "/data/test/code/multi-local/rotation_model/same-rot45-l2_20250228_225839.pth",
+
 
     "wdecay": 0.0005,
     "epsilon": 1e-7,

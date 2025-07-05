@@ -128,6 +128,11 @@ class VIGOR(Dataset):
         masked_pano = pano1
         mask[:, w_start1:w_end1, :] = zeros[:, w_start1:w_end1, :]
 
+        rotation_range = self.ori_noise
+        random_ori = np.random.uniform(-1, 1) * rotation_range / 360
+        ori_angle = random_ori * 360
+        pano = np.roll(resized_pano, int(random_ori * resized_pano.shape[1]), axis=1)
+
 
         pano_bev = get_BEV_tensor(pano, 500, 500, dty=0, dy=0, out=self.out).numpy().astype(np.uint8)
         pano_bev = cv2.resize(pano_bev, (self.bev_size, self.bev_size))
@@ -158,7 +163,7 @@ class VIGOR(Dataset):
         elif 'Chicago' in pano_path:
             city = 'Chicago'
 
-        return bev, sat, pano_gps, sat_gps, torch.tensor(sat_delta, dtype=torch.float32), torch.tensor(
+        return bev, sat, pano_gps, sat_gps, ori_angle, torch.tensor(sat_delta, dtype=torch.float32), torch.tensor(
             self.meter_per_pixel_dict[city], dtype=torch.float32), \
             masked_pano, mask, resized_pano, city, torch.tensor(masked_fov, dtype=torch.float32)
 

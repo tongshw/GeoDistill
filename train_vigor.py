@@ -10,7 +10,7 @@ import numpy as np
 from model.dino import center_padding, DINO
 from model.loss import cross_entropy, multi_scale_contrastive_loss
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 os.environ['WANDB_MODE'] = "offline"
 import time
 
@@ -21,7 +21,7 @@ from torch import nn, optim
 
 from tqdm import tqdm
 
-from model.Network import LocalizationNet
+from model.network_vigor import LocalizationNet
 
 from utils.util import setup_seed, print_colored, count_parameters, TextColors, vis_corr, \
      generate_mask_avg, generate_MAE_mask
@@ -51,7 +51,7 @@ def train_epoch_geodistill(args, dino, teacher, student, train_loader, optimizer
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
+        bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
 
@@ -163,7 +163,7 @@ def train_epoch_g2sweakly(args, dino, model, train_loader, optimizer, device, ep
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
+        bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
 
@@ -240,7 +240,7 @@ def validate(args, dino, model, val_loader, device, epoch=-1, vis=False, name=No
         pbar = tqdm(val_loader, desc='Validation')
 
         for i_batch, data_blob in enumerate(pbar):
-            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
+            bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
                 x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
             city = data_blob[-1]
 
@@ -547,7 +547,7 @@ if __name__ == '__main__':
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-geodisll-clean", help="none")
+    parser.add_argument('--name', default="cross-geodisll-clean-vitl14", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',

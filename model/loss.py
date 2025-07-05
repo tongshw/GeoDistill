@@ -135,3 +135,57 @@ def multi_scale_contrastive_loss(corr_maps, levels):
         matching_losses.append(loss)
 
     return torch.mean(torch.stack(matching_losses, dim=0))
+
+
+
+def calculate_errors(true_labels, logits, num_classes=45):
+    """
+    计算平均误差和误差中值
+    true_labels: 真实标签张量，形状为 [batch_size]
+    predicted_labels: 预测标签张量，形状为 [batch_size]
+    """
+    # 计算绝对误差
+    predicted_labels = torch.argmax(logits, dim=1)
+    predicted_labels -= num_classes
+    errors = torch.abs(true_labels - predicted_labels)
+
+    # 计算平均误差
+    mean_error = errors.float().mean()
+
+    # 计算误差中值
+    median_error = torch.median(errors.float())
+
+    return errors, mean_error, median_error
+
+def generate_soft_labels(true_labels, num_classes, sigma=1.0):
+    """
+    生成基于高斯分布的软标签，支持批量标签
+    true_labels: 真实标签，应该是一个整数数组（如 [20, 21, 19, ...]）
+    num_classes: 类别数量，假设为 90
+    sigma: 高斯分布的标准差，控制软标签的平滑度
+    """
+    # true_labels 形状：[batch_size]，例如 [20, 21, 19, ..., 18]
+    batch_size = true_labels.size(0)
+
+    # 创建类别索引，形状为 [num_classes]
+    class_indices = torch.arange(num_classes, device=true_labels.device)  # [0, 1, ..., 89]
+
+    # 为每个样本生成软标签
+    soft_labels = []
+
+    for i in range(batch_size):
+        true_label = true_labels[i]
+        # 计算每个类别与真实标签的距离
+        distances = torch.abs(class_indices - true_label)
+
+        # 使用高斯分布生成软标签
+        soft_label = torch.exp(-distances ** 2 / (2 * sigma ** 2))
+
+        # 归一化概率，使得总和为 1
+        soft_label /= soft_label.sum()
+
+        soft_labels.append(soft_label)
+
+    # 将所有样本的软标签堆叠起来，形状为 [batch_size, num_classes]
+    return torch.stack(soft_labels)
+

@@ -10,7 +10,7 @@
     "restore_ckpt": null,
 
     "ckpt_g2sweakly": null,
-    "ckpt_geodistill":"/data/test/code/geodistill_vit/kitti_ckpt/vanilla/kitti-distill-270-300_20250704_101504.pth",
+    "ckpt_geodistill":"/data/test/code/geodistill_vit/kitti_ckpt/vanilla/kitti-dino-g2sweakly_20250704_152529.pth",
     "teacher_ckpt": null,
     "student_ckpt": null,
     "model": "/data/test/code/geodistill_vit/kitti_ckpt/vanilla/kitti-distill-270-300_20250704_101504.pth",

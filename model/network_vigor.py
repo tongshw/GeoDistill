@@ -31,8 +31,11 @@ class LocalizationNet(nn.Module):
         input_dim = 3
         # self.sat_VGG = VGGUnet(self.levels, self.channels)
         # self.grd_VGG = VGGUnet(self.levels, self.channels) if args.p_siamese else None
-        self.SatDPT = DPT()
-        self.GrdDPT = DPT()
+        # self.SatDPT = DPT()
+        # self.GrdDPT = DPT()
+        self.SatDPT = DPT(input_dims=[1024*2, 1024*2, 1024*2, 1024*2])
+        self.GrdDPT = DPT(input_dims=[1024*2, 1024*2, 1024*2, 1024*2])
+
 
         feature_dim = 320
         self.rotation_range = 0

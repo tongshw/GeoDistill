@@ -5,25 +5,21 @@ import os
 import numpy as np
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['WANDB_MODE'] = "offline"
 import time
 
 import torch
 import wandb
-# import wandb
 from easydict import EasyDict
-from matplotlib import pyplot as plt
 from torch import nn, optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from model.orientation_estimator import RotationPredictionNet
 from model.loss import  generate_soft_labels, calculate_errors
-from utils.util import setup_seed, print_colored, count_parameters, visualization, TextColors
+from utils.util import setup_seed, print_colored, visualization, TextColors
 from dataset.VIGOR import fetch_dataloader, VIGOR
 import torch.nn.functional as F
-import random
-import torchvision.transforms.functional as TF
+
 def load_trained_model(model, pth_file, device):
     # 加载保存的模型权重
     checkpoint = torch.load(pth_file, map_location=device)
@@ -40,7 +36,7 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
+        bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, rotated_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         num_class = args.ori_noise * 2
 
@@ -109,13 +105,14 @@ def validate(args, model, val_loader, criterion, device, vis=False):
 
         for i_batch, data_blob in enumerate(pbar):
 
-            bev, sat, grd_gps, sat_gps, ori_angle, sat_delta, pano2_bev, delta_angle, pano_bev = [x.to(device) for x in data_blob]
+            bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, rotated_pano, city, masked_fov = [
+                x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
             gt_ori = ori_angle
             ori_angle = ori_angle.cpu().numpy()
             num_class = args.ori_noise * 2
 
-            rotation_label = np.round((ori_angle + args.ori_noise) / num_class * (num_class - 1)).astype(int)
-            rotation_label = torch.tensor(rotation_label, dtype=torch.long, device=bev.device)
+            # rotation_label = np.floor((ori_angle + args.ori_noise) / num_class * (num_class - 1)).astype(int)
+            # rotation_label = torch.tensor(rotation_label, dtype=torch.long, device=bev.device)
 
 
 
@@ -239,17 +236,17 @@ if __name__ == '__main__':
     parser.add_argument('--config', default="dataset/config_vigor.json", type=str, help="path of config file")
     parser.add_argument('--dropout', type=float, default=0.0)
     parser.add_argument('--start_step', type=int, default=0)
-    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
     parser.add_argument('--epochs', type=int, default=16)
 
 
-    parser.add_argument('--name', default="cross-train_on_NY", help="none")
+    parser.add_argument('--name', default="cross-ori45", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
-    parser.add_argument('--train', default=True)
+    parser.add_argument('--train', default=False)
 
 
     args = parser.parse_args()

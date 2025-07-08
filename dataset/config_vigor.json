@@ -13,16 +13,19 @@
     "orien": true,
 
     "ckpt_g2sweakly": null,
-    "ckpt_geodistill":null,
+    "ckpt_geodistill1":"/data/test/code/geodistill_vit/vigor_ckpt/g2sweakly/cross-g2sweakly-clean_20250702_135837.pth",
+    "ckpt_geodistill": "/data/test/code/geodistill_vit/vigor_ckpt/g2sweakly/same-g2sweakly-clean_20250702_135755.pth",
     "teacher_ckpt": null,
     "student_ckpt": null,
 
-    "model": "/data/test/code/geodistill_vit/kitti/student/cross-dino-distill_20250531_090106.pth",
+    "model1": "/data/test/code/geodistill_vit/vigor_ckpt/g2sweakly/cross-g2sweakly-clean_20250702_135837.pth",
+    "model2": "/data/test/code/geodistill_vit/vigor_ckpt/g2sweakly/same-g2sweakly-clean_20250702_135755.pth",
+    "model": "/data/test/code/geodistill_vit/vigor_ckpt/geodistill/student/cross-geodistill-clean_20250706_201244.pth",
     "save_path": "vigor_ckpt",
     "teacher": null,
     "student": null,
 
-    "orientation_model": "/data/test/code/geodistill_vit/rotation_ckpt/cross.pth",
+    "orientation_model": "/data/test/code/geodistill_vit/vigor_ckpt/cross.pth",
     "orientation_ckpt": null,
     "rotation_model": "/data/test/code/multi-local/rotation_model/cross-rot45-l2_20250228_225816.pth",
     "rotation_model1": "/data/test/code/multi-local/rotation_model/same-rot45-l2_20250228_225839.pth",

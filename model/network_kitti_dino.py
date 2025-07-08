@@ -41,7 +41,6 @@ class LocalizationNet(nn.Module):
         self.GrdDPT = DPT(input_dims=[1024*2, 1024*2, 1024*2, 1024*2])
 
 
-        feature_dim = 320
         self.rotation_range = 0
         self.grd_height = -2
 

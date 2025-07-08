@@ -203,7 +203,10 @@ def validate(args, dino, model, val_loader, device, epoch=-1, vis=False, name=No
             # 原版的网络输出最大的feature是256*256 和输入图像一样大
             sat_feat_dict, g2s_feat_dict, mask_dict = model(sat_feat_list, grd_feat_list, left_camera_k)
 
-            meter_per_pixel = get_meter_per_pixel(scale=sat_feat_dict[2].shape[-1]/sat_map.shape[-1])
+            # meter_per_pixel = get_meter_per_pixel(scale=sat_feat_dict[2].shape[-1]/sat_map.shape[-1])
+            meter_per_pixel_ = get_meter_per_pixel()
+            meter_per_pixel = meter_per_pixel_*128/152
+            # meter_per_pixel = 1
 
             corr = model.calc_corr_for_val(sat_feat_dict, g2s_feat_dict, mask_dict=None)
 
@@ -476,7 +479,7 @@ def test_cross(args):
     test_loader = load_test2_data(args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
 
     model = LocalizationNet(args).to(device)
-    dinov2 = DINO().to(device)
+    dinov2 = DINO(model_name="vitl14").to(device)
 
     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
     mean_error, median_error = validate(args, dinov2, model, test_loader, device, name="student")
@@ -487,7 +490,7 @@ def test_same(args):
     test_loader = load_test1_data(args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
 
     model = LocalizationNet(args).to(device)
-    dinov2 = DINO().to(device)
+    dinov2 = DINO(model_name="vitl14").to(device)
 
     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
     criterion = nn.CrossEntropyLoss()
@@ -501,7 +504,7 @@ if __name__ == '__main__':
     parser.add_argument('--start_step', type=int, default=0)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--epochs', type=int, default=5)
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
@@ -510,12 +513,12 @@ if __name__ == '__main__':
     parser.add_argument('--shift_range_lon', type=float, default=20., help='meters')
 
 
-    parser.add_argument('--name', default="kitti-dino-geodistill", help="none")
+    parser.add_argument('--name', default="kitti-dino-geodistill-infer", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
     parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
-    parser.add_argument('--train', default=True)
+    parser.add_argument('--train', default=False)
 
     parser.add_argument('--train_g2sweakly', default=False)
     args = parser.parse_args()
@@ -557,6 +560,7 @@ if __name__ == '__main__':
         if args.train_g2sweakly:
             train_g2sweakly(config)
         else:
+            config['epochs'] *= 2
             train_geodistill(config)
     else:
         if args.cross_area:

@@ -9,6 +9,7 @@ import numpy as np
 from matplotlib.colors import Normalize
 
 from model.dino import DINO
+from model.loss import calculate_errors
 from model.orientation_estimator import RotationPredictionNet
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
@@ -61,25 +62,36 @@ def validate_with_rotation(args, dino, model, rotation_estimator,  val_loader, c
 
         for i_batch, data_blob in enumerate(pbar):
             # 解包数据
-            bev, sat, pano_gps, sat_gps, sat_delta, meter_per_pixel, pano1, ones1, pano2, ones2, resized_pano, city, \
-                masked_fov, ori_angle = [x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
+            bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, rotated_pano, city, masked_fov = [
+                x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
             city = data_blob[-1]
-
+            gt_ori = ori_angle
+            ori_angle = ori_angle.cpu().numpy()
             # plt.figure(figsize=(10, 5))
-            # plt.imshow(pano1[0].cpu().detach().numpy().astype(np.uint8))
+            # plt.imshow(resized_pano[0].cpu().detach().numpy().astype(np.uint8))
             # plt.show()
             #
             pred_label = rotation_estimator(sat, bev)
             predicted_labels = torch.argmax(pred_label, dim=1)
             predicted_labels -= args.ori_noise
-            for i in range(resized_pano.shape[0]):
+
+            err, mean_err, median_err = calculate_errors(gt_ori, pred_label)
+            # plt.figure(figsize=(10, 5))
+            # plt.imshow(rotated_pano[0].cpu().detach().numpy().astype(np.uint8))
+            # plt.show()
+
+            rotation_errs.extend(err.cpu().numpy())
+
+            for i in range(rotated_pano.shape[0]):
                 # print(f"after shift:{shift}")
                 # print(resized_pano.shape)
                 # 反向移位
-                resized_pano_cpu = resized_pano[i].cpu().numpy()
+                resized_pano_cpu = rotated_pano[i].cpu().numpy()
                 resized_pano_cpu = np.roll(resized_pano_cpu, -int(predicted_labels[i].cpu().detach().numpy() / 360 * 640), axis=1)
-                resized_pano[i] = torch.tensor(resized_pano_cpu).to(resized_pano.device)
-
+                rotated_pano[i] = torch.tensor(resized_pano_cpu).to(rotated_pano.device)
+            # plt.figure(figsize=(10, 5))
+            # plt.imshow(rotated_pano[0].cpu().detach().numpy().astype(np.uint8))
+            # plt.show()
             # pred_label = rotation_estimator(sat, bev)
             # pred_ori = torch.argmax(pred_label, dim=1) - 45
             #
@@ -108,7 +120,7 @@ def validate_with_rotation(args, dino, model, rotation_estimator,  val_loader, c
 
 
             sat_img = 2 * (sat / 255.0) - 1.0
-            pano_img = 2 * (resized_pano / 255.0) - 1.0
+            pano_img = 2 * (rotated_pano / 255.0) - 1.0
 
             sat_img = sat_img.contiguous()
             pano_img = pano_img.contiguous()
@@ -152,18 +164,18 @@ def validate_with_rotation(args, dino, model, rotation_estimator,  val_loader, c
             gt_points[:, 1] = 512 / 2 + gt_points[:, 1]
             pred_x = pred_u / meter_per_pixel + 512 / 2
             pred_y = pred_v / meter_per_pixel + 512 / 2
-            if i_batch % 25 == 0 and args.visualize:
-                if args.save_visualization:
-                    if epoch == -1:
-                        save_path = f"./vis/distillation/{args.model_name}/test/{sat_gps[0].cpu().numpy()}.png"
-                    else:
-                        if name is None:
-                            save_path = f"./vis/distillation/{args.model_name}/val/{epoch}/{sat_gps[0].cpu().numpy()}.png"
-                        else:
-                            save_path = f"./vis/distillation/{args.model_name}/val/{name}_{epoch}/{sat_gps[0].cpu().numpy()}.png"
-                    vis_corr(corr[0], sat[0], pano1[0], gt_points[0], [pred_x[0], pred_y[0]], save_path)
-                else:
-                    vis_corr(corr[0], sat[0], pano1[0], gt_points[0], [pred_x[0], pred_y[0]], None)
+            # if i_batch % 25 == 0 and args.visualize:
+            #     if args.save_visualization:
+            #         if epoch == -1:
+            #             save_path = f"./vis/distillation/{args.model_name}/test/{sat_gps[0].cpu().numpy()}.png"
+            #         else:
+            #             if name is None:
+            #                 save_path = f"./vis/distillation/{args.model_name}/val/{epoch}/{sat_gps[0].cpu().numpy()}.png"
+            #             else:
+            #                 save_path = f"./vis/distillation/{args.model_name}/val/{name}_{epoch}/{sat_gps[0].cpu().numpy()}.png"
+            #         vis_corr(corr[0], sat[0], pano1[0], gt_points[0], [pred_x[0], pred_y[0]], save_path)
+            #     else:
+            #         vis_corr(corr[0], sat[0], pano1[0], gt_points[0], [pred_x[0], pred_y[0]], None)
 
 
     pred_us = np.concatenate(pred_us, axis=0)
@@ -212,20 +224,20 @@ def test_with_rotation(args):
     criterion = nn.CrossEntropyLoss()
     mean_error, median_error = validate_with_rotation(args, dinov2, model, rotation_estimator, test_loader, criterion, device, name="student")
 
-    print(f"mean rotation: {mean_error:.4f}")
-    print(f"median rotation: {median_error:.4f}")
+    # print(f"mean rotation: {mean_error:.4f}")
+    # print(f"median rotation: {median_error:.4f}")
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default="dataset/config_vigor.json", type=str, help="path of config file")
-    parser.add_argument('--batch_size', default=1, type=int)
+    parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--gpuid', type=int, nargs='+', default=[0])
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-train_on_NY-3dof-infer", help="none")
+    parser.add_argument('--name', default="cross-3dof-geodistill-dino-infer", help="none")
     parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
 

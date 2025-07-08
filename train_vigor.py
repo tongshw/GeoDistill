@@ -4,7 +4,6 @@ import json
 import os
 import random
 
-import cv2
 import numpy as np
 
 from model.dino import center_padding, DINO
@@ -23,8 +22,7 @@ from tqdm import tqdm
 
 from model.network_vigor import LocalizationNet
 
-from utils.util import setup_seed, print_colored, count_parameters, TextColors, vis_corr, \
-     generate_mask_avg, generate_MAE_mask
+from utils.util import setup_seed, print_colored, vis_corr, generate_mask_avg, generate_MAE_mask
 from dataset.VIGOR import fetch_dataloader, VIGOR
 
 
@@ -51,7 +49,7 @@ def train_epoch_geodistill(args, dino, teacher, student, train_loader, optimizer
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
+        bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, rotated_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
 
@@ -163,7 +161,7 @@ def train_epoch_g2sweakly(args, dino, model, train_loader, optimizer, device, ep
 
     for i_batch, data_blob in enumerate(pbar):
         # 解包数据并移动到设备
-        bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
+        bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, rotated_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
 
@@ -240,7 +238,7 @@ def validate(args, dino, model, val_loader, device, epoch=-1, vis=False, name=No
         pbar = tqdm(val_loader, desc='Validation')
 
         for i_batch, data_blob in enumerate(pbar):
-            bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, city, masked_fov = [
+            bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, rotated_pano, city, masked_fov = [
                 x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
             city = data_blob[-1]
 
@@ -342,7 +340,7 @@ def train_geodistill(args):
 
     student = LocalizationNet(args).to(device)
 
-    dinov2 = DINO().to(device)
+    dinov2 = DINO(model_name="vitb14").to(device)
 
 
     optimizer = torch.optim.AdamW(
@@ -414,7 +412,7 @@ def train_geodistill(args):
 
             print_colored(f"Saved new best student model with mean error: {s_best_val_mean_err:.4f}")
 
-        t_mean_error, t_median_error = validate(args, teacher, val_loader, device, epoch, name="teacher")
+        t_mean_error, t_median_error = validate(args, dinov2, teacher, val_loader, device, epoch, name="teacher")
 
         scheduler.step()
 
@@ -456,7 +454,7 @@ def train_g2sweakly(args):
 
     model = LocalizationNet(args).to(device)
 
-    dinov2 = DINO().to(device)
+    dinov2 = DINO(model_name="vitb14").to(device)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -496,7 +494,7 @@ def train_g2sweakly(args):
         mean_error, median_error = validate(args, dinov2, model, val_loader, device, epoch, name="student")
 
         if mean_error < best_val_mean_err:
-            s_best_val_mean_err = mean_error
+            best_val_mean_err = mean_error
 
             model_path = os.path.join(args.save_path, "g2sweakly")
             if not os.path.exists(model_path):
@@ -507,10 +505,10 @@ def train_g2sweakly(args):
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'lr_schedule': scheduler.state_dict(),
-                'loss': s_best_val_mean_err
+                'loss': best_val_mean_err
             }, f'{model_path}/{args.model_name}.pth')
 
-            print_colored(f"Saved new best model with mean error: {s_best_val_mean_err:.4f}")
+            print_colored(f"Saved new best model with mean error: {best_val_mean_err:.4f}")
 
 
         scheduler.step()
@@ -530,11 +528,10 @@ def test(args):
     test_loader = fetch_dataloader(args, split="test")
 
     model = LocalizationNet(args).to(device)
-    dinov2 = DINO().to(device)
+    dinov2 = DINO(model_name="vitb14").to(device)
 
     model, start_epoch, best_val_loss = load_trained_model(model, args.model, device)
-    criterion = nn.CrossEntropyLoss()
-    mean_error, median_error = validate(args, dinov2, model, test_loader, criterion, device, name="student")
+    mean_error, median_error = validate(args, dinov2, model, test_loader, device, name="student")
 
 
 if __name__ == '__main__':
@@ -547,12 +544,12 @@ if __name__ == '__main__':
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="cross-geodisll-clean-vitl14", help="none")
+    parser.add_argument('--name', default="same-g2sweakly-clean-infer", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
-    parser.add_argument('--cross_area', default=True, action='store_true',
+    parser.add_argument('--cross_area', default=False, action='store_true',
                         help='Cross_area or same_area')  # Siamese
-    parser.add_argument('--train', default=True)
+    parser.add_argument('--train', default=False)
     parser.add_argument('--train_g2sweakly', default=False)
 
     args = parser.parse_args()
@@ -589,6 +586,7 @@ if __name__ == '__main__':
         if args.train_g2sweakly:
             train_g2sweakly(config)
         else:
+            config['epochs'] *= 2
             train_geodistill(config)
     else:
         test(config)

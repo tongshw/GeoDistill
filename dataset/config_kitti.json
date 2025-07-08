@@ -13,7 +13,7 @@
     "ckpt_geodistill":"/data/test/code/geodistill_vit/kitti_ckpt/vanilla/kitti-dino-g2sweakly_20250704_152529.pth",
     "teacher_ckpt": null,
     "student_ckpt": null,
-    "model": "/data/test/code/geodistill_vit/kitti_ckpt/vanilla/kitti-distill-270-300_20250704_101504.pth",
+    "model": "/data/test/code/geodistill_vit/kitti_ckpt/student/kitti-dino-geodistill_20250705_072109.pth",
     "save_path": "kitti_ckpt",
     "teacher": "/data/test/code/multi-local/location_model/cross-proj-feat-l1consistency-corr_w100_20241221_194415.pth",
     "student": "/data/test/code/multi-local/distillation_model/teacher/best/cross-randomfov180-240_20250120_094602.pth",

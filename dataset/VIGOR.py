@@ -128,13 +128,22 @@ class VIGOR(Dataset):
         masked_pano = pano1
         mask[:, w_start1:w_end1, :] = zeros[:, w_start1:w_end1, :]
 
+        # =================== get shifted panorama ===================================
+        # rotation_range = self.ori_noise
+        # ori_angle = np.random.randint(-rotation_range, rotation_range + 1)
+        # width = resized_pano.shape[1]
+        # pixel_shift = (ori_angle / 360.0) * width
+        # actual_pixel_shift = int(round(pixel_shift))
+        # pano = np.roll(resized_pano, actual_pixel_shift, axis=1)
+
+
         rotation_range = self.ori_noise
         random_ori = np.random.uniform(-1, 1) * rotation_range / 360
         ori_angle = random_ori * 360
-        pano = np.roll(resized_pano, int(random_ori * resized_pano.shape[1]), axis=1)
+        rotated_pano = np.roll(resized_pano, int(random_ori * resized_pano.shape[1]), axis=1)
 
 
-        pano_bev = get_BEV_tensor(pano, 500, 500, dty=0, dy=0, out=self.out).numpy().astype(np.uint8)
+        pano_bev = get_BEV_tensor(rotated_pano, 500, 500, dty=0, dy=0, out=self.out).numpy().astype(np.uint8)
         pano_bev = cv2.resize(pano_bev, (self.bev_size, self.bev_size))
         bev = torch.from_numpy(pano_bev).float().permute(2, 0, 1)
 
@@ -165,7 +174,7 @@ class VIGOR(Dataset):
 
         return bev, sat, pano_gps, sat_gps, ori_angle, torch.tensor(sat_delta, dtype=torch.float32), torch.tensor(
             self.meter_per_pixel_dict[city], dtype=torch.float32), \
-            masked_pano, mask, resized_pano, city, torch.tensor(masked_fov, dtype=torch.float32)
+            masked_pano, mask, resized_pano, rotated_pano, city, torch.tensor(masked_fov, dtype=torch.float32)
 
 
 class DistanceBatchSampler:

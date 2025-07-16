@@ -83,41 +83,10 @@ def validate_with_rotation(args, dino, model, rotation_estimator,  val_loader, c
             rotation_errs.extend(err.cpu().numpy())
 
             for i in range(rotated_pano.shape[0]):
-                # print(f"after shift:{shift}")
-                # print(resized_pano.shape)
-                # 反向移位
+
                 resized_pano_cpu = rotated_pano[i].cpu().numpy()
                 resized_pano_cpu = np.roll(resized_pano_cpu, -int(predicted_labels[i].cpu().detach().numpy() / 360 * 640), axis=1)
                 rotated_pano[i] = torch.tensor(resized_pano_cpu).to(rotated_pano.device)
-            # plt.figure(figsize=(10, 5))
-            # plt.imshow(rotated_pano[0].cpu().detach().numpy().astype(np.uint8))
-            # plt.show()
-            # pred_label = rotation_estimator(sat, bev)
-            # pred_ori = torch.argmax(pred_label, dim=1) - 45
-            #
-            # err, mean_err, median_err = calculate_errors(ori_angle, pred_label)
-            # rotation_errs.extend(err.cpu().numpy())
-            #
-            # # print(f"pred:{pred_ori[0]}, gt_ori:{ori_angle[0]}")
-            #
-            # for i in range(resized_pano.shape[0]):
-            #     if pred_ori[i] > 0:
-            #         shift = round(pred_ori[i].cpu().numpy() * 640 / 360)
-            #     else:
-            #         shift = math.floor(pred_ori[i].cpu().numpy() * 640 / 360)
-            #     # print(f"after shift:{shift}")
-            #     # print(resized_pano.shape)
-            #     # 反向移位
-            #     resized_pano_cpu = resized_pano[i].cpu().numpy()
-            #     resized_pano_cpu = np.roll(resized_pano_cpu, -shift, axis=1)
-            #
-            #     # 如果需要将结果返回到 GPU
-            #     resized_pano[i] = torch.tensor(resized_pano_cpu).to(resized_pano.device)
-
-            # plt.figure(figsize=(10, 5))
-            # plt.imshow(resized_pano[0].cpu().detach().numpy().astype(np.uint8))
-            # plt.show()
-
 
             sat_img = 2 * (sat / 255.0) - 1.0
             pano_img = 2 * (rotated_pano / 255.0) - 1.0
@@ -134,10 +103,6 @@ def validate_with_rotation(args, dino, model, rotation_estimator,  val_loader, c
                 pano1_feat_dict = model(sat_feat_list, pano_feat_list, meter_per_pixel, mask=None)
 
             corr = model.calc_corr_for_val(sat_feat_dict, sat_conf_dict, bev_feat_dict, bev_conf_dict, mask_dict=None)
-
-            # # 计算损失
-            # cls_loss, reg_loss = criterion(pred_cls, coord_offset, sat_delta)
-            # loss = 100 * cls_loss + 1 * reg_loss
 
             max_level = args.levels[-1]
 

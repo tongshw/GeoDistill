@@ -28,9 +28,6 @@ class LocalizationNet(nn.Module):
         self.levels = args.levels
         self.channels = args.channels
 
-        input_dim = 3
-        # self.sat_VGG = VGGUnet(self.levels, self.channels)
-        # self.grd_VGG = VGGUnet(self.levels, self.channels) if args.p_siamese else None
         self.SatDPT = DPT()
         self.GrdDPT = DPT()
         # self.SatDPT = DPT(input_dims=[1024*2, 1024*2, 1024*2, 1024*2])
@@ -103,13 +100,6 @@ class LocalizationNet(nn.Module):
 
     def forward(self, sat_feat_list, pano_feat_list, meter_per_pixel, mask=None):
         B = sat_feat_list[0].shape[0]
-        # shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        # shift_v = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_img.device)
-        # grd1_proj, grd1_conf_proj, grd_uv = self.project_grd_to_map(
-        #     pano1.permute(0, 3, 1, 2), pano1, None, shift_u, shift_v, 2, meter_per_pixel)
-        # plt.figure(figsize=(10, 5))
-        # plt.imshow(grd1_proj[1].permute(1, 2, 0).cpu().detach().numpy().astype(np.uint8))
-        # plt.show()
 
         sat_feat_dict = self.SatDPT(sat_feat_list)
 
@@ -120,7 +110,6 @@ class LocalizationNet(nn.Module):
         mask_dict = {}
         pano_conf_dict = {}
         sat_conf_dict = {}
-        # corr_maps = {}
         B = sat_feat_dict[0].shape[0]
 
         shift_u = torch.zeros([B], dtype=torch.float32, requires_grad=True, device=sat_feat_dict[0].device)
@@ -141,11 +130,10 @@ class LocalizationNet(nn.Module):
             if mask is not None:
                 resized_mask_batch = []
 
-                for i in range(B):  # 遍历 batch
+                for i in range(B):
                     resized_mask = cv2.resize(mask[i], (w, h), interpolation=cv2.INTER_LINEAR)
                     resized_mask_batch.append(resized_mask)
 
-                # 将结果转回 NumPy 数组，然后再转回 PyTorch 张量
                 resized_mask_batch = np.stack(resized_mask_batch)  # 将所有图片拼接成一个数组
                 mask_ = torch.from_numpy(resized_mask_batch)
                 mask_ = mask_.to(sat_feat.device).permute(0, 3, 1, 2)
@@ -176,14 +164,7 @@ class LocalizationNet(nn.Module):
             bev_conf = torch.ones_like(bev_feat)[:, :1, :, :]
             if mask_dict is not None:
                 mask = mask_dict[level]
-
                 mask = mask[:, 0, :, :]
-                # plt.figure(figsize=(4, 4))  # 设置图大小
-                # plt.imshow(mask[0].cpu().detach().numpy(), cmap="viridis")  # 使用 viridis 颜色映射
-                # plt.colorbar(label="Confidence")  # 添加颜色条
-                # plt.title(f"bev mask ")
-                # plt.axis("on")  # 关闭坐标轴
-                # plt.show()
                 mask = mask.unsqueeze(1)
 
                 bev_conf = bev_conf * mask
@@ -253,12 +234,6 @@ class LocalizationNet(nn.Module):
 
         if mask is not None:
             mask = mask[:, 0, :, :]
-            # plt.figure(figsize=(4, 4))  # 设置图大小
-            # plt.imshow(mask[0].cpu().detach().numpy(), cmap="viridis")  # 使用 viridis 颜色映射
-            # plt.colorbar(label="Confidence")  # 添加颜色条
-            # plt.title(f"bev mask ")
-            # plt.axis("on")  # 关闭坐标轴
-            # plt.show()
             mask = mask.unsqueeze(1)
 
             bev_conf = bev_conf * mask

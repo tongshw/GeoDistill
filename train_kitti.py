@@ -36,7 +36,6 @@ import torch.nn.functional as F
 
 
 def load_trained_model(model, pth_file, device):
-    # 加载保存的模型权重
     checkpoint = torch.load(pth_file, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     print(f"Loaded trained model from {pth_file}, epoch {checkpoint['epoch']}, val_loss {checkpoint['loss']:.4f}")
@@ -53,19 +52,12 @@ def train_epoch_geodistill(args, dino, teacher, student, train_loader, optimizer
     teacher.eval()
     total_loss = 0
 
-    # 进度条
     pbar = tqdm(train_loader, desc='Training')
 
     for i_batch, data_blob in enumerate(pbar):
         sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading, mask = [item.to(device) for
                                                                                                     item in data_blob]
         masked_grd = grd_left_imgs * mask
-        # fig = plt.figure(figsize=(20, 5), dpi=100)  # 可自定义尺寸
-        # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
-        # ax.axis('off')  # 不显示坐标轴
-        # mask = masked_grd[0].detach().cpu().numpy().transpose(1, 2, 0) * 255
-        # ax.imshow(mask.astype(np.uint8))
-        # plt.show()
 
         sat_feat_list = dino(sat_map)
         grd_feat_list = dino(grd_left_imgs)
@@ -78,7 +70,6 @@ def train_epoch_geodistill(args, dino, teacher, student, train_loader, optimizer
 
         sat_feat_dict_s, g2s_feat_dict_s, mask_dict_s = student(copied_sat_feat_list, masked_grd_feat_list, left_camera_k, mask)
 
-        # 清除梯度
         optimizer.zero_grad()
 
         teacher_corr = teacher.calc_corr_for_train(sat_feat_dict_t, g2s_feat_dict_t, batch_wise=False)
@@ -87,21 +78,15 @@ def train_epoch_geodistill(args, dino, teacher, student, train_loader, optimizer
 
         loss = cross_entropy(student_corr, teacher_corr, args.levels, s_temp=args.student_temp, t_temp=args.teacher_temp)
 
-        # 反向传播
         loss.backward()
 
-        # 梯度裁剪
         torch.nn.utils.clip_grad_norm_(student.parameters(), max_norm=1.0)
 
-        # 参数更新
         optimizer.step()
 
-        # 累计损失
         total_loss += loss.item()
 
-        # 更新进度条
 
-        # 更新进度条
         pbar.set_postfix({
             'ce_loss': f'{loss.item():.4f}',
 
@@ -122,11 +107,9 @@ def train_epoch_g2sweakly(args, dino, model, train_loader, optimizer, device, ep
     model.train()
     total_loss = 0
 
-    # 进度条
     pbar = tqdm(train_loader, desc='Training')
 
     for i_batch, data_blob in enumerate(pbar):
-        # 解包数据并移动到设备
         sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading = [item.to(device) for
                                                                                                     item in data_blob[:7]]
 
@@ -137,7 +120,6 @@ def train_epoch_g2sweakly(args, dino, model, train_loader, optimizer, device, ep
         #     model(sat_map, grd_left_imgs, left_camera_k)
         sat_feat_dict, g2s_feat_dict, mask_dict = model(sat_feat_list, grd_feat_list, left_camera_k)
 
-        # 清除梯度
         optimizer.zero_grad()
 
         corr_maps = model.calc_corr_for_train(sat_feat_dict, g2s_feat_dict, batch_wise=True)
@@ -145,19 +127,14 @@ def train_epoch_g2sweakly(args, dino, model, train_loader, optimizer, device, ep
         loss = multi_scale_contrastive_loss(corr_maps, args.levels)
 
 
-        # 反向传播
         loss.backward()
 
-        # 梯度裁剪
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-        # 参数更新
         optimizer.step()
 
-        # 累计损失
         total_loss += loss.item()
 
-        # 更新进度条
         pbar.set_postfix({
             'ce_loss': f'{loss.item():.4f}',
             'avg_loss': f'{total_loss / (i_batch + 1):.4f}'
@@ -189,18 +166,13 @@ def validate(args, dino, model, val_loader, device, epoch=-1, vis=False, name=No
         pbar = tqdm(val_loader, desc='Validation')
 
         for i_batch, data_blob in enumerate(pbar):
-            # 解包数据
-            # sat_align_cam和sat_map都是256*256
             sat_align_cam, sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading = [
                 item.to(device) for item in data_blob[:7]]
 
             sat_feat_list = dino(sat_map)
             grd_feat_list = dino(grd_left_imgs)
 
-            # plt.figure(figsize=(10, 5))
-            # plt.imshow((sat_map[0]*256).permute(1, 2, 0).cpu().detach().numpy().astype(np.uint8))
-            # plt.show()
-            # 原版的网络输出最大的feature是256*256 和输入图像一样大
+
             sat_feat_dict, g2s_feat_dict, mask_dict = model(sat_feat_list, grd_feat_list, left_camera_k)
 
             # meter_per_pixel = get_meter_per_pixel(scale=sat_feat_dict[2].shape[-1]/sat_map.shape[-1])
@@ -261,26 +233,22 @@ def validate(args, dino, model, val_loader, device, epoch=-1, vis=False, name=No
 
 
 def train_geodistill(args):
-    # 设备设置
     device = torch.device("cuda:" + str(args.gpuid[0]) if torch.cuda.is_available() else "cpu")
 
-    # 数据加载
 
     train_loader = load_train_data(args, args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
     val_loader = load_test1_data(args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
 
-    # 模型初始化
     student = LocalizationNet(args).to(device)
     dinov2 = DINO().to(device)
 
 
     optimizer = torch.optim.AdamW(
         student.parameters(),
-        lr=1e-4,  # 学习率
-        weight_decay=1e-5  # 权重衰减
+        lr=1e-4,
+        weight_decay=1e-5
     )
 
-    # 学习率调度
     t_best_val_mean_err = float('inf')
     s_best_val_mean_err = float('inf')
 
@@ -322,17 +290,13 @@ def train_geodistill(args):
     for param in teacher.parameters():
         param.requires_grad = False
 
-    # 训练循环
-
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch + 1}/{args.epochs}")
 
-        # 训练
         train_loss = train_epoch_geodistill(args, dinov2, teacher, student, train_loader, optimizer, device, epoch)
 
         update_teacher_model(student, teacher, args.ema)
 
-        # 验证
 
         s_mean_error, s_median_error = validate(args, dinov2, student, val_loader, device, epoch, name="student")
 
@@ -356,10 +320,8 @@ def train_geodistill(args):
 
         t_mean_error, t_median_error = validate(args, dinov2, teacher, val_loader, device, epoch, name="teacher")
 
-        # 学习率调度
         scheduler.step()
 
-        # 模型检查点
         if t_mean_error < t_best_val_mean_err:
             t_best_val_mean_err = t_mean_error
 
@@ -378,7 +340,7 @@ def train_geodistill(args):
 
             print_colored(f"Saved new best teacher model with mean error: {t_best_val_mean_err:.4f}")
 
-        # 打印训练总结
+
         print(f"Epoch {epoch + 1} Summary:")
         print(f"Train Loss: {train_loss:.4f}")
         # print(f"Val Loss: {val_loss:.4f}")
@@ -391,16 +353,13 @@ def train_geodistill(args):
 
 
 def train_g2sweakly(args):
-    # 设备设置
     device = torch.device("cuda:" + str(args.gpuid[0]) if torch.cuda.is_available() else "cpu")
 
-    # 数据加载
 
     train_loader = load_train_data(args, args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
     val_loader = load_test1_data(args.batch_size, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
 
 
-    # 模型初始化
     model = LocalizationNet(args).to(device)
 
     dinov2 = DINO().to(device)
@@ -411,7 +370,6 @@ def train_g2sweakly(args):
         weight_decay=1e-5  # 权重衰减
     )
 
-    # 学习率调度
 
 
     if args.ckpt_g2sweakly is not None:
@@ -460,10 +418,8 @@ def train_g2sweakly(args):
 
             print_colored(f"Saved new best student model with mean error: {s_best_val_mean_err:.4f}")
 
-        # 学习率调度
         scheduler.step()
 
-        # 打印训练总结
         print(f"Epoch {epoch + 1} Summary:")
         print(f"Train Loss: {train_loss:.4f}")
         # print(f"Val Loss: {val_loss:.4f}")

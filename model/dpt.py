@@ -49,23 +49,23 @@ class FeatureFusionBlock(nn.Module):
 class MLP(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super(MLP, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)  # 第一个全连接层
-        self.bn1 = nn.BatchNorm1d(hidden_size)  # 第一个批量归一化层
-        self.relu = nn.ReLU()  # ReLU 激活函数
-        self.fc2 = nn.Linear(hidden_size, output_size)  # 第二个全连接层
-        self.bn2 = nn.BatchNorm1d(output_size)  # 第二个批量归一化层
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.bn1 = nn.BatchNorm1d(hidden_size)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(hidden_size, output_size)
+        self.bn2 = nn.BatchNorm1d(output_size)
 
     def forward(self, x):
         batch_size, seq_length, _ = x.shape
-        x = x.view(-1, x.size(2))  # 将 x 变形为 [batch_size * seq_length, feature_dim]
+        x = x.view(-1, x.size(2))
 
-        out = self.fc1(x)  # 输入经过第一个全连接层
-        out = self.bn1(out)  # 通过第一个批量归一化层
-        out = self.relu(out)  # 通过 ReLU 激活函数
-        out = self.fc2(out)  # 输入经过第二个全连接层
-        out = self.bn2(out)  # 通过第二个批量归一化层
+        out = self.fc1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.fc2(out)
+        out = self.bn2(out)
 
-        out = out.view(batch_size, seq_length, -1)  # 将输出重新变形为 [batch_size, seq_length, output_dim]
+        out = out.view(batch_size, seq_length, -1)
         return out
 
 

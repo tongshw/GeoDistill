@@ -44,11 +44,9 @@ def train_epoch_geodistill(args, dino, teacher, student, train_loader, optimizer
     teacher.eval()
     total_loss = 0
 
-    # 进度条
     pbar = tqdm(train_loader, desc='Training')
 
     for i_batch, data_blob in enumerate(pbar):
-        # 解包数据并移动到设备
         bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, rotated_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
@@ -160,13 +158,11 @@ def train_epoch_g2sweakly(args, dino, model, train_loader, optimizer, device, ep
     pbar = tqdm(train_loader, desc='Training')
 
     for i_batch, data_blob in enumerate(pbar):
-        # 解包数据并移动到设备
         bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, rotated_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         city = data_blob[-1]
 
 
-        # 清除梯度
         optimizer.zero_grad()
 
         sat_img = 2 * (sat / 255.0) - 1.0
@@ -181,7 +177,6 @@ def train_epoch_g2sweakly(args, dino, model, train_loader, optimizer, device, ep
         pano_feat_list = dino(pano_img)
 
 
-        # 前向传播
         (s_sat_feat_dict, s_sat_conf_dict, s_g2s_feat_dict, s_g2s_conf_dict, s_mask1_dict
          , pano1_conf_dict, pano1_feat_dict) = model(sat_feat_list, pano_feat_list, meter_per_pixel, mask=None)
 

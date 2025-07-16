@@ -248,39 +248,21 @@ class LocalizationNet(nn.Module):
             # meter_per_pixel = self.meters_per_pixel[level]
             sat_feat = sat_feat_dict_forT[level]
             grd_feat = grd_feat_dict_forT[level]
-            max3 = grd_feat.max()
-            min3 = grd_feat.min()
 
             A = sat_feat.shape[-1]
             grd_feat_proj, grd_conf_proj, grd_uv, mask = self.project_grd_to_map(
                 grd_feat, grd_conf_dict_forT[level], shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
                 ori_grdW,
                 require_jac=False)
-            max4 = grd_feat_proj.max()
-            min4 = grd_feat_proj.min()
             B, c, h, w = grd_feat.shape
             if fov_mask is not None:
 
-                # fig = plt.figure(figsize=(20, 5), dpi=100)  # 可自定义尺寸
-                # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
-                # ax.axis('off')  # 不显示坐标轴
-                # mask = fov_mask[0].detach().cpu().numpy().transpose(1, 2, 0) * 255
-                # ax.imshow(mask.astype(np.uint8))
-                # plt.show()
-
                 resized_batch1 = []
-                for i in range(B):  # 遍历 batch
+                for i in range(B):
                     resized_image1 = cv2.resize(fov_mask[i].detach().cpu().numpy().transpose(1, 2, 0), (w, h), interpolation=cv2.INTER_LINEAR)
                     resized_batch1.append(resized_image1)
 
-                # fig = plt.figure(figsize=(10, 5), dpi=100)  # 可自定义尺寸
-                # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
-                # ax.axis('off')  # 不显示坐标轴
-                # ax.imshow(resized_batch1[0])
-                # plt.show()
-
-                # 将结果转回 NumPy 数组，然后再转回 PyTorch 张量
-                resized_batch1 = np.stack(resized_batch1)  # 将所有图片拼接成一个数组
+                resized_batch1 = np.stack(resized_batch1)
                 mask1 = torch.from_numpy(resized_batch1)
                 mask1 = mask1.to(sat_feat.device).permute(0, 3, 1, 2)
 
@@ -289,21 +271,7 @@ class LocalizationNet(nn.Module):
                     ori_grdW,
                     require_jac=False)
                 fov_mask_dict[level] = fov_mask_proj
-                # fig = plt.figure(figsize=(10, 5), dpi=100)  # 可自定义尺寸
-                # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
-                # ax.axis('off')  # 不显示坐标轴
-                # ax.imshow(fov_mask[0])
-                # plt.show()
 
-            # grd_proj, grd_proj, _, mask = self.project_grd_to_map(
-            #     ori_grd, ori_grd, shift_u, shift_v, heading, left_camera_k, A, ori_grdH,
-            #     ori_grdW,
-            #     require_jac=False)
-            # fig = plt.figure(figsize=(10, 5), dpi=100)  # 可自定义尺寸
-            # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
-            # ax.axis('off')  # 不显示坐标轴
-            # ax.imshow(grd_proj[0].detach().cpu().numpy().transpose(1, 2, 0))
-            # plt.show()
 
             g2s_feat_dict[level] = grd_feat_proj
             g2s_conf_dict[level] = grd_conf_proj
@@ -343,13 +311,6 @@ class LocalizationNet(nn.Module):
             bev_conf = bev_conf_dict[level]
             if mask_dict is not None:
                 mask = mask_dict[level]
-
-                # fig = plt.figure(figsize=(5, 5), dpi=100)  # 可自定义尺寸
-                # ax = fig.add_axes([0, 0, 1, 1])  # 完全填充，没有边框
-                # ax.axis('off')  # 不显示坐标轴
-                # mask1 = mask[0].detach().cpu().numpy().transpose(1, 2, 0)
-                # ax.imshow(mask1)
-                # plt.show()
 
 
                 mask = mask[:, 0, :, :]

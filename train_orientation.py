@@ -21,7 +21,6 @@ from dataset.VIGOR import fetch_dataloader, VIGOR
 import torch.nn.functional as F
 
 def load_trained_model(model, pth_file, device):
-    # 加载保存的模型权重
     checkpoint = torch.load(pth_file, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     print(f"Loaded trained model from {pth_file}, epoch {checkpoint['epoch']}, val_loss {checkpoint['loss']:.4f}")
@@ -31,11 +30,9 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
     model.train()
     total_loss = 0
 
-    # 进度条
     pbar = tqdm(train_loader, desc='Training')
 
     for i_batch, data_blob in enumerate(pbar):
-        # 解包数据并移动到设备
         bev, sat, pano_gps, sat_gps, ori_angle, sat_delta, meter_per_pixel, masked_pano, mask, resized_pano, rotated_pano, city, masked_fov = [
             x.to(device) if isinstance(x, torch.Tensor) else x for x in data_blob]
         num_class = args.ori_noise * 2
@@ -66,19 +63,14 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
         # TODO
         # loss = criterion(pred_label, soft_rotation_label)
 
-        # 反向传播
         loss.backward()
 
-        # 梯度裁剪
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-        # 参数更新
         optimizer.step()
 
-        # 累计损失
         total_loss += loss.item()
 
-        # 更新进度条
         pbar.set_postfix({
             'batch_loss': f'{loss.item():.4f}',
             'avg_loss': f'{total_loss / (i_batch + 1):.4f}'
@@ -89,7 +81,6 @@ def train_epoch(args, model, train_loader, criterion, optimizer, device):
                        })
 
 
-    # 返回平均损失
     return total_loss / len(train_loader)
 
 
@@ -165,7 +156,7 @@ def train(args):
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=1e-4,
-        weight_decay=1e-4  # 调整正则化强度
+        weight_decay=1e-4
     )
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -179,16 +170,12 @@ def train(args):
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch + 1}/{args.epochs}")
 
-        # 训练
         train_loss = train_epoch(args, model, train_loader, criterion, optimizer, device)
 
-        # 验证
         val_loss, mean_rotation, median_rotation = validate(args, model, val_loader, criterion, device)
 
-        # 学习率调度
         scheduler.step()
 
-        # 模型检查点
         if mean_rotation < best_val_mean_err:
             best_val_mean_err = mean_rotation
             model_path = args.save_path

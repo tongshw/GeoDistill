@@ -9,7 +9,7 @@ import numpy as np
 from model.dino import center_padding, DINO
 from model.loss import cross_entropy, multi_scale_contrastive_loss
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 os.environ['WANDB_MODE'] = "offline"
 import time
 
@@ -485,9 +485,6 @@ def train_g2sweakly(args):
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch + 1}/{args.epochs}")
 
-        # mean_error, median_error = validate(args, dinov2, model, val_loader, device, epoch, name="student")
-
-
         train_loss = train_epoch_g2sweakly(args, dinov2, model, train_loader, optimizer, device, epoch)
 
 
@@ -544,10 +541,10 @@ if __name__ == '__main__':
     parser.add_argument('--levels', type=int, nargs='+', default=[0, 2])
     parser.add_argument('--channels', type=int, nargs='+', default=[64, 16, 4])
 
-    parser.add_argument('--name', default="same-g2sweakly-clean-infer", help="none")
+    parser.add_argument('--name', default="cross-geodistill-clean-infer-s", help="none")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--validation', type=str, nargs='+')
-    parser.add_argument('--cross_area', default=False, action='store_true',
+    parser.add_argument('--cross_area', default=True, action='store_true',
                         help='Cross_area or same_area')  # Siamese
     parser.add_argument('--train', default=False)
     parser.add_argument('--train_g2sweakly', default=False)

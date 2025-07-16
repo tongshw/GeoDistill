@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="shaowen@10.19.138.103:22 password (19)" confirmBeforeUploading="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="shaowen@10.19.138.103:22 password (26)" confirmBeforeUploading="false">
     <option name="confirmBeforeUploading" value="false" />
     <serverData>
       <paths name="shaowen@10.19.138.103:22 password">
@@ -119,6 +119,20 @@
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="shaowen@10.19.138.103:22 password (25)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="shaowen@10.19.138.103:22 password (26)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/data/test/code/geodistill_vit" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>

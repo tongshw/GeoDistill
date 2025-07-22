@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://arxiv.org/pdf/2507.10935" target='_blank'>
-    <img src="https://img.shields.io/badge/arXiv-2308.16906-orange?">
+    <img src="https://img.shields.io/badge/arXiv-2507.10935-orange?">
   </a> 
   <a href="https://arxiv.org/pdf/2507.10935" target='_blank'>
     <img src="https://img.shields.io/badge/Paper-📖-green?">

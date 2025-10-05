@@ -8,10 +8,10 @@
     <img src="https://img.shields.io/badge/Paper-📖-green?">
   </a>
   <a href="#citation">
-    <img src="https://img.shields.io/badge/Citation-🔗;-blue">
+    <img src="https://img.shields.io/badge/Citation-🔗-blue">
   </a>
   <a href="https://www.youtube.com/watch?v=kwxXtFHl5TE">
-    <img src="https://img.shields.io/badge/YouTube-🎞;-red">
+    <img src="https://img.shields.io/badge/YouTube-🎞-red">
   </a>
 </p>
 

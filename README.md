@@ -53,6 +53,8 @@ cd GeoDistill
 We released our implementation of G2SWeakly and GeoDistill with G2SWeakly both VGG and DINO variants. 
 
 **We apply mask in both ground image and feature maps when base model is G2SWeakly, and when use CCVPE as base model, we apply mask to the descriptor.**
+
+**Before training, you need to set the pre-trained weight loading path for the teacher and student models in the config file.**
 ```bash
 # to train our implemented G2SWeakly in VIGOR cross area
 python -u train_vigor.py --train True --train_g2sweakly True --cross_area True
